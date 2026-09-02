@@ -6,12 +6,11 @@ description = "Demon minimal de noeud de telemetrie securise pour Linux embarque
 license = "Apache-2.0"
 
 # Cibles : aarch64-unknown-linux-musl (RPi3B+/arm64), riscv64gc-unknown-linux-musl.
+# Aucune dépendance externe : prctl est déclaré en FFI direct dans le code
+# (pas de crates.io requis — la redpesk factory peut builder sans réseau).
 [[bin]]
 name = "secure-telemetry-node"
 path = "src/main.rs"
-
-[dependencies]
-libc = "0.2"
 
 [profile.release]
 opt-level = "s"
@@ -19,9 +18,3 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
-
-# Binaire totalement statique sur les cibles musl (indispensable riscv64).
-[target.aarch64-unknown-linux-musl]
-rustflags = ["-C", "target-feature=+crt-static"]
-[target.riscv64gc-unknown-linux-musl]
-rustflags = ["-C", "target-feature=+crt-static"]

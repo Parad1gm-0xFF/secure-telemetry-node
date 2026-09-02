@@ -7,10 +7,20 @@
 //   - être compilable en STATIC MUSL aarch64 (aucune libc dynamique) : idéal
 //     pour l'exécution sous qemu-aarch64 et la portabilité RISC-V
 //
-// Zéro dépendance lourde : std + libc (prctl pour le sandbox). Robustesse
-// et binaire minimal.
+// Zéro dépendance externe (aucun crates.io requis) : prctl est déclaré en FFI
+// direct, ce qui permet à la redpesk factory de builder SANS accès réseau au
+// registre Rust — robuste et auditable.
 
-use libc::{prctl, PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, SECCOMP_MODE_STRICT};
+// Déclaration FFI manuelle de prctl(2) (Linux), sans crate libc.
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i32;
+}
+// Constantes passées à prctl.
+const PR_SET_NO_NEW_PRIVS: i32 = 38;
+const PR_SET_SECCOMP: i32 = 22;
+const SECCOMP_MODE_STRICT: u64 = 1;
+
 use std::env;
 use std::io::{Read, Write};
 use std::net::TcpListener;
