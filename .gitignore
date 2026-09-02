@@ -1,0 +1,17 @@
+# --- Rust / Cargo ---
+# `target/` : artefacts de build, jamais committés.
+/target
+# `Cargo.lock` EST committé pour un binaire Rust (reproductibilité des builds).
+
+# --- QEMU usermode téléchargé (10 Mo) : récupéré à la volée par run-qemu.sh ---
+/tools/
+
+# --- Yocto / bitbake ---
+build/
+tmp/
+*.pyc
+
+# --- divers ---
+*.o
+*.a
+*.rpm

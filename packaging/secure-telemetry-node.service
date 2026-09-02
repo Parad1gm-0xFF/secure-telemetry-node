@@ -1,0 +1,23 @@
+[Unit]
+Description=Secure Telemetry Node (télémétrie sécurisée)
+After=network.target
+
+[Service]
+# Binaire statique : pas de LD_LIBRARY_PATH nécessaire.
+ExecStart=/usr/sbin/secure-telemetry-node --port=5555
+Restart=on-failure
+RestartSec=3
+User=telemetry
+Group=telemetry
+
+# Sécurité noyau (durcissement systemd, complément du seccomp applicatif).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
