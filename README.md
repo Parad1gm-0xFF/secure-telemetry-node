@@ -87,15 +87,22 @@ docker run --rm -v "$PWD":/work -w /work \
 
 ## 📦 Packaging RPM (modèle redpesk)
 
-Le daemon se livre en **RPM aarch64** (specfile). Dans la redpesk factory, chaque
-application/BSP devient un package installable/actualisable via `dnf`, indépendant
-des images OS — on applique ici exactement ce modèle :
+Le daemon se livre en **RPM aarch64** — artefact fourni dans **`dist/`**.
+Dans la redpesk factory, chaque application/BSP devient un package installable/
+actualisable via `dnf`, indépendant des images OS. On applique exactement ce
+modèle : le RPM empaquette le binaire ARM pré-compilé + l'unité systemd.
 
 ```bash
-# construire l'image OS ou générer le package
-rpmbuild -bb spec/secure-telemetry-node.spec
-# sur la cible :
-dnf install secure-telemetry-node
+# 1. RPM déjà construit (fourni) :
+ls dist/secure-telemetry-node-0.1.0-1.el9.aarch64.rpm
+
+# 2. Le reconstruire soi-même (sur hôte x86, via Docker) :
+docker run --rm -v "$PWD/.rpmbuild":/rpmbuild -w /rpmbuild almalinux:9 \
+  bash -c 'dnf install -y rpm-build && rpmbuild --define "_topdir /rpmbuild" \
+  --target aarch64-redhat-linux-gnu -bb SPECS/secure-telemetry-node.spec'
+
+# 3. Installer sur la cible (redpesk OS / système RPM) :
+dnf install secure-telemetry-node-0.1.0-1.el9.aarch64.rpm
 systemctl enable --now secure-telemetry-node
 ```
 

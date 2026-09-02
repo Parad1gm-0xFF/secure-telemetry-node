@@ -11,7 +11,10 @@ build/
 tmp/
 *.pyc
 
-# --- divers ---
-*.o
-*.a
+# --- RPM : l'artefact buildé est livré dans dist/ (committé comme preuve) ---
+# .rpm générés hors du dossier dist/ sont ignorés (ex: arbre rpmbuild local).
 *.rpm
+!/dist/*.rpm
+
+# --- arbre rpmbuild local ---
+.rpmbuild/
