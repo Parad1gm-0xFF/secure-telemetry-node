@@ -58,7 +58,7 @@ cargo build --release --locked \
 install -D -m 0755 %{_builddir}/%{name}-%{version}/target/release/secure-telemetry-node \
     %{buildroot}%{_sbindir}/secure-telemetry-node
 install -D -m 0644 %{_builddir}/%{name}-%{version}/packaging/secure-telemetry-node.service \
-    %{buildroot}%{_unitdir}/secure-telemetry-node.service
+    %{buildroot}/usr/lib/systemd/system/secure-telemetry-node.service
 
 %check
 # Test non bloquant et robuste : on lance le daemon et on vérifie qu'il démarre
