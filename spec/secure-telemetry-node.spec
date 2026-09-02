@@ -9,7 +9,7 @@ Release:        1%{?dist}
 Summary:        Secure telemetry node daemon (Rust, static musl)
 
 License:        Apache-2.0
-URL:            https://github.com/<vous>/secure-telemetry-node
+URL:            https://github.com/Parad1gm-0xFF/secure-telemetry-node
 Source0:        %{name}-%{version}.tar.gz
 
 # Cible : aarch64 (RPi3B+/arm64). Le binaire est deja compile en static musl

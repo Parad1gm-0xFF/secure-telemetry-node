@@ -135,7 +135,7 @@ la sécurité ne se limite pas à l'applicatif, elle s'applique au système.
 Prérequis : **Docker** (rootless suffit), `curl`, ~quelques Go d'espace.
 
 ```bash
-git clone https://github.com/<vous>/secure-telemetry-node
+git clone https://github.com/Parad1gm-0xFF/secure-telemetry-node
 cd secure-telemetry-node
 
 make build-aarch64   # ou : make build-riscv64

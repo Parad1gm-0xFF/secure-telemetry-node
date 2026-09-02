@@ -7,7 +7,7 @@
 #   IMAGE_INSTALL:append = " secure-telemetry-node"  (dans l'image)
 
 SUMMARY = "Secure telemetry node daemon (Rust, static)"
-HOMEPAGE = "https://github.com/<vous>/secure-telemetry-node"
+HOMEPAGE = "https://github.com/Parad1gm-0xFF/secure-telemetry-node"
 LICENSE = "Apache-2.0"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=<remplacer-par-hash>"
 
