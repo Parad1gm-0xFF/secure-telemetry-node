@@ -85,7 +85,7 @@ fi
 
 %files
 %{_sbindir}/secure-telemetry-node
-%{_unitdir}/secure-telemetry-node.service
+/usr/lib/systemd/system/secure-telemetry-node.service
 
 %post
 systemctl daemon-reload || true
