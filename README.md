@@ -109,7 +109,7 @@ la sécurité ne se limite pas à l'applicatif, elle s'applique au système.
 - **Seccomp** + `no-new-privs` via `prctl` (sandbox applicatif minimal).
 - **Unité systemd** avec durcissement (ProtectSystem=strict, PrivateTmp, RestrictSUIDSGID…).
 - **Binaire statique** : aucune dépendance dynamique à charger/attaqquer.
-- Philosophy alignée redpesk : *« la sécurité ne peut pas être ajoutée après coup »*.
+- Philosophie alignée redpesk : *« la sécurité ne peut pas être ajoutée après coup »*.
 
 > Note : sous musl, `syscall(SECCOMP_MODE_STRICT)` échoue souvent (l'allocateur
 > exige plus que read/write/_exit) → le code bascule proprement en mode dégradé
@@ -146,6 +146,6 @@ make run-qemu        # exécution ARM sous QEMU
 
 ## 📜 Licence
 
-Apache-2.0 — © 2026 Antoine Jousselin.
+Apache-2.0 — © 2026 Parad1gm_0xFF.
 Projet de démonstration, non affilié à IoT.bzh. Les noms redpesk®, redpak® et
 Yocto restent la propriété de leurs détenteurs respectifs.
