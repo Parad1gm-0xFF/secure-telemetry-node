@@ -39,6 +39,14 @@ BuildRequires:  rust
 
 # BuildArch: on ne le fixe pas => la factory utilise l'arch cible du projet
 # (aarch64 ou x86_64 selon le choix dans l'UI redpesk).
+#
+# Cible Rust déduite de l'arch rpm : indispensable pour le CROSS-BUILD.
+# Sur le build aarch64, l'hôte de compilation est x86_64 (émulation) : sans
+# --target, cargo produit un binaire x86_64 → erreur "wrong architecture".
+%global rust_triple x86_64-unknown-linux-gnu
+%ifarch aarch64
+%global rust_triple aarch64-unknown-linux-gnu
+%endif
 
 %description
 Demon de telemetrie securise pour Linux embarque, compile A LA SOURCE par la
@@ -50,12 +58,13 @@ seccomp, unite systemd durcie.
 %autosetup
 
 %build
-# Compilation Rust cible par la factory (arch du projet).
-cargo build --release --locked \
+# Compilation Rust vers l'arch cible du paquet (cross-build sûr).
+cargo build --release --locked --offline \
+    --target %{rust_triple} \
     --manifest-path %{_builddir}/%{name}-%{version}/Cargo.toml
 
 %install
-install -D -m 0755 %{_builddir}/%{name}-%{version}/target/release/secure-telemetry-node \
+install -D -m 0755 %{_builddir}/%{name}-%{version}/target/%{rust_triple}/release/secure-telemetry-node \
     %{buildroot}%{_sbindir}/secure-telemetry-node
 install -D -m 0644 %{_builddir}/%{name}-%{version}/packaging/secure-telemetry-node.service \
     %{buildroot}/usr/lib/systemd/system/secure-telemetry-node.service
@@ -67,7 +76,7 @@ install -D -m 0644 %{_builddir}/%{name}-%{version}/packaging/secure-telemetry-no
 # (read/write/_exit) et peut interrompre le process après le bind — ce qui est
 # le comportement sécuritaire voulu pour un démon d'infrastructure critique.
 cd %{_builddir}/%{name}-%{version}
-./target/release/secure-telemetry-node --port=5599 > /tmp/stn-test.log 2>&1 &
+./target/%{rust_triple}/release/secure-telemetry-node --port=5599 > /tmp/stn-test.log 2>&1 &
 PID=$!
 sleep 1
 # Preuve de démarrage : le log doit contenir 'listening'.
