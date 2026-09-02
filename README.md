@@ -30,8 +30,7 @@ Il illustre, en un seul dépôt, les missions d'un profil Kernel/BSP embarqué :
 ```
 src/main.rs                → Daemon Rust (std + libc, aucun objet lourd)
 Cargo.toml                 → cibles aarch64 / riscv64, binaire statique musl
-spec/secure-telemetry-node.spec → packaging RPM (binaire pré-compilé, modèle redpesk)
-spec/secure-telemetry-node-redpesk.spec → specfile redpesk « build from source » (cargo)
+spec/secure-telemetry-node.spec → specfile RPM unique, « build from source » (cargo)
 packaging/secure-telemetry-node.service → unité systemd durcie
 layers/meta-secure-node/   → layer Yocto (recipe .bb) pour l'image RPi3B+
 scripts/build-cross.sh     → cross-compile aarch64 + riscv64 (Docker)
@@ -90,33 +89,31 @@ docker run --rm -v "$PWD":/work -w /work \
 ## 📦 Packaging RPM (modèle redpesk)
 
 Dans la redpesk factory, chaque application/BSP devient un package installable/
-actualisable via `dnf`, indépendant des images OS. On l'illustre de **deux façons** :
+actualisable via `dnf`, indépendant des images OS. Un **specfile unique** compile
+le code Rust dans la factory ; des **artefacts pré-construits** sont aussi fournis.
 
-### Variante A — binaire pré-compilé (`spec/secure-telemetry-node.spec`)
-Embarque le binaire ARM déjà cross-compilé + l'unité systemd.
-
-```bash
-# 1. RPM déjà construit (fourni) :
-ls dist/secure-telemetry-node-0.1.0-1.el9.aarch64.rpm
-
-# 2. Le reconstruire soi-même (sur hôte x86, via Docker) :
-docker run --rm -v "$PWD/.rpmbuild":/rpmbuild -w /rpmbuild almalinux:9 \
-  bash -c 'dnf install -y rpm-build && rpmbuild --define "_topdir /rpmbuild" \
-  --target aarch64-redhat-linux-gnu -bb SPECS/secure-telemetry-node.spec'
-
-# 3. Installer sur la cible (redpesk OS / système RPM) :
-dnf install secure-telemetry-node-0.1.0-1.el9.aarch64.rpm
-systemctl enable --now secure-telemetry-node
-```
-
-### Variante B — « build from source » redpesk (`spec/secure-telemetry-node-redpesk.spec`)
-Compile le code Rust **via cargo directement dans la factory** (projet `standard`
-redpesk). C'est cette variante qu'on utilise sur la plateforme — voir
+### Specfile `spec/secure-telemetry-node.spec` — « build from source »
+Compile le code Rust **via cargo directement** (projet `standard` redpesk). C'est
+la variante qu'on utilise sur la plateforme — voir
 [la section dédiée](#-utiliser-son-compte-redpesk-free--community).
 
 ```bash
 # RPM x86_64 validé (compilé et testé par le specfile) :
 ls dist/secure-telemetry-node-0.1.0-1.el9.x86_64.rpm
+
+# Reconstruire localement (sur hôte x86, via Docker) :
+docker run --rm -v "$PWD/.rpmbuild":/rpmbuild -w /rpmbuild almalinux:9 \
+  bash -c 'dnf install -y rpm-build cargo && rpmbuild --define "_topdir /rpmbuild" \
+  -bb SPECS/secure-telemetry-node.spec'
+```
+
+### Artefact pré-compilé aarch64 (fourni, référence)
+Binaire ARM cross-compilé (RPi3B+), packagé pour installation directe.
+
+```bash
+ls dist/secure-telemetry-node-0.1.0-1.el9.aarch64.rpm
+dnf install secure-telemetry-node-0.1.0-1.el9.aarch64.rpm
+systemctl enable --now secure-telemetry-node
 ```
 
 Unité `systemd` durcie (`NoNewPrivileges`, `ProtectSystem`, `PrivateTmp`, …) —
@@ -158,7 +155,7 @@ et obtenir un RPM + un **SBOM/VEX** — le volet cybersécurité au cœur de red
 
 ### Concepts redpesk à connaître
 - **Projet `standard`** → produit un **référentiel RPM** (les applications packagées).
-- **Application** → liée à un **dépôt git** + un **specfile** (ici `secure-telemetry-node-redpesk.spec`).
+- **Application** → liée à un **dépôt git** + un **specfile** (ici `secure-telemetry-node.spec`).
 - **Distribution** → ex. `redpesk lts corn 3.0` (aligné CentOS, LTS).
 - Le **test automatisé** intégré ne se fait que sur cible **x86_64 virtuelle (QEMU)** ;
   pour ARM on construit l'image ou on installe le RPM sur la carte.
@@ -169,7 +166,7 @@ et obtenir un RPM + un **SBOM/VEX** — le volet cybersécurité au cœur de red
 2. **Ajouter l'application** dans le projet :
    - **Source URL** : `https://github.com/Parad1gm-0xFF/secure-telemetry-node`
    - **Source revision** : `main`
-   - **Spec file** : `spec/secure-telemetry-node-redpesk.spec`
+   - **Spec file** : `spec/secure-telemetry-node.spec`
      (option « specfile dans le dépôt source »)
 3. **Choisir l'architecture** :
    - `x86_64` → pour le **test redpesk** (QEMU virtuel) — le plus rapide ;
