@@ -28,7 +28,7 @@ Il illustre, en un seul dépôt, les missions d'un profil Kernel/BSP embarqué :
 ## 🧱 Architecture
 
 ```
-src/main.rs                → Daemon Rust (std + libc, aucun objet lourd)
+src/main.rs                → Daemon Rust (std seul, FFI prctl — aucune dépendance externe)
 Cargo.toml                 → cibles aarch64 / riscv64, binaire statique musl
 spec/secure-telemetry-node.spec → specfile RPM unique, « build from source » (cargo)
 packaging/secure-telemetry-node.service → unité systemd durcie
@@ -178,6 +178,29 @@ et obtenir un RPM + un **SBOM/VEX** — le volet cybersécurité au cœur de red
 
 > Limite du compte Free : builder **partagé**, compilation/tests « best effort »
 > (pas de QoS, files d'attente). Suffisant pour une démo.
+
+### Stratégie d'architecture (validée — Option A)
+
+**Compilation par la factory (`build-from-source`) : fait sur `x86_64`** ✅
+Le build **x86_64** redpesk passe et produit un **RPM + SBOM/VEX** — c'est la preuve
+de la chaîne CI redpesk (source → build → package → analyse de sécurité).
+
+**Cross-compilation `aarch64` : démontrée par cross-compile locale + QEMU** ✅
+Le target `aarch64` n'est **pas compilable par le builder redpesk Community** car
+le builder est *offline* et le **`rust-std` pour aarch64 n'existe pas** dans les
+dépôts RHEL/Alma/EPEL (seules les std `x86_64`/`i686`/`wasm` y sont). `rustup target
+add aarch64` (qui télécharge) est donc indisponible.
+
+La compétence **aarch64** est prouvée par les chaînes locales (reproductibles) :
+- binaire **statique `aarch64-unknown-linux-musl`** cross-compilé (voir plus haut),
+- **exécuté sous QEMU usermode** sans matériel ARM,
+- RPM aarch64 pré-construit fourni dans `dist/`.
+
+> **Pourquoi c'est un bon signal (même en échec de build-aarch64) :** démontrer
+> qu'on comprend *pourquoi* le builder ne peut pas cross-compiler (std Rust manquant
+> offline) et qu'on sait où basculer (x86_64 pour la CI, cross-compile locale pour
+> l'embarqué) est un atout en entretien : cela reflète une vraie maîtrise des
+> contraintes d'industrialisation et de build, au cœur d'un poste Kernel/BSP.
 
 ---
 
