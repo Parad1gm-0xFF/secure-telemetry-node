@@ -133,6 +133,20 @@ la sécurité ne se limite pas à l'applicatif, elle s'applique au système.
 > tout en restant fonctionnel. En production réelle, redpesk s'appuie sur
 > **LSM (Smack/SELinux)** + conteneur **redpak** — c'est le niveau d'isolation cible.
 
+### Résultat de l'audit sécurité redpesk (interprété honnêtement)
+
+La factory redpesk propose plusieurs analyseurs statiques (gosec, clang-tidy,
+flawfinder). Le build x86_64 a été audité — **aucune vulnérabilité remontée**.
+
+> **Interprétation (nuancée) :** ces outils ciblent Go et C/C++. Étant un projet
+> **Rust en std pur, sans aucune dépendance externe**, ils ne trouvent aucun
+> fichier de leur langage à analyser → le "0 vulnérabilité" est autant un
+> artefact d'outillage qu'un signal. Le vrai argument de sécurité est structurel :
+> **aucune dépendance tierce** (ni supply-chain à scanner, ni code C/C++/Go à
+> auditer) + **sécurité dès le build** (seccomp, unité systemd durcie, binaire
+> statique). Comprendre les limites des scanners est une compétence clé pour un
+> profil cybersécurité embarqué.
+
 ---
 
 ## 🔧 Déploiement sur Raspberry Pi 3B+
