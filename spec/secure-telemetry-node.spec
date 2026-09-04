@@ -92,8 +92,12 @@ wait "$PID" 2>/dev/null || true
 # refusée par le filtre). Non bloquant : si seccomp est indisponible dans
 # l'environnement de build (ex. conteneur sans support), on le signale sans
 # casser le paquet.
+# NB : rpmbuild exécute %check avec `set -e` ; un SIGSYS (statut non nul) ferait
+# sortir le shell avant lecture de $RC. On désactive donc -e explicitement.
+set +e
 "$BIN" --sandbox-self-test
 RC=$?
+set -e
 if [ "$RC" -eq 132 ] || [ "$RC" -eq 159 ]; then
     echo "secure-telemetry-node: test seccomp OK (écriture refusée par SIGSYS)";
 elif [ "$RC" -eq 1 ]; then
