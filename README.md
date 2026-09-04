@@ -1,4 +1,4 @@
-# secure-telemetry-node
+# 🐟 secure-telemetry-node.
 
 > Daemon de télémétrie **sécurisée** pour Linux embarqué : **Rust** (std seul, zéro
 > dépendance), cross-compilé **aarch64 / riscv64** (musl statique), exécuté sous
@@ -11,7 +11,7 @@ plateforme **redpesk** (factory, packaging RPM, sécurité dès le build, LTS).
 
 ---
 
-## Ce que le projet prouve
+## 🎯 Ce que le projet prouve
 
 | Mission / compétence | Preuve dans ce dépôt |
 |---|---|
@@ -25,7 +25,7 @@ plateforme **redpesk** (factory, packaging RPM, sécurité dès le build, LTS).
 
 ---
 
-## Sécurité réelle, pas du théâtre
+## 🔒 Sécurité réelle, pas du théâtre
 
 Le point central du projet est un **filtre seccomp (SECCOMP_MODE_FILTER) écrit à la
 main en bytecode BPF**, sans libseccomp. Contrairement à un mode `STRICT` (qui tue
@@ -72,7 +72,7 @@ $ ./secure-telemetry-node --sandbox-self-test ; echo $?
 
 ---
 
-## Architecture
+## 🧱 Architecture
 
 ```
 src/main.rs                 → Daemon Rust (std seul, FFI prctl/fork/openat).
@@ -91,7 +91,7 @@ scripts/flash-rpi3.sh       → Écriture de l'image Yocto sur carte SD.
 
 ---
 
-## Démonstration
+## ✅ Démonstration
 
 ### 1. Compiler et tester (x86_64, poste de dev)
 
@@ -133,7 +133,7 @@ actif sur la cible embarquée réelle (kernel Yocto).
 
 ---
 
-## Versant Kernel/BSP
+## 🔧 Versant Kernel/BSP
 
 Voir `kernel/README.md` pour le détail. Le dépôt embarque :
 
@@ -147,7 +147,7 @@ Voir `kernel/README.md` pour le détail. Le dépôt embarque :
 
 ---
 
-## Packaging RPM (modèle redpesk)
+## 📦 Packaging RPM (modèle redpesk)
 
 Le specfile compile le code Rust dans la factory et exécute un `%check` qui
 vérifie le **démarrage + réponse HTTP** sous sandbox, puis le **self-test SIGSYS**
@@ -166,7 +166,7 @@ docker run --rm -v "$PWD/.rpmbuild":/rpmbuild -w /rpmbuild almalinux:9 \
 
 ---
 
-## Build & audits sur la plateforme redpesk
+## 🐟 Build & audits sur la plateforme redpesk
 
 Le projet est industrialisé sur la **redpesk factory Community**
 (`community-app.redpesk.bzh`, compte gratuit), via `rp-cli`. Résultats au
@@ -195,7 +195,7 @@ Détails honnêtes :
 
 ---
 
-## Note : pourquoi `opt-level = 2` dans le profil release
+## ⚙️ Note : pourquoi `opt-level = 2` dans le profil release
 
 La valeur `"s"` (taille) casse la **sonde de détection seccomp** : elle passe par
 `fork()` dans `probe_args_offset`, et une optimisation de taille trop agressive
@@ -205,7 +205,7 @@ dépendance).
 
 ---
 
-## Licence
+## 📜 Licence
 
 Apache-2.0, 2026 Parad1gm_0xFF. Projet de démonstration, non affilié à IoT.bzh.
 Les noms redpesk, redpak et Yocto restent la propriété de leurs détenteurs.
