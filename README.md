@@ -71,7 +71,7 @@ Sortie réelle obtenue :
 t=+3s cpu_temp=25.0C gpio=stable free_mem_kb=9629064
 ```
 
-👉 Un exécutable **ARM** qui répond depuis un poste **x86**, via QEMU usermode —
+👉 Un exécutable **ARM** qui répond depuis un poste **x86**, via QEMU usermode -
 preuve de la chaîne cross-compile + émulation.
 
 ### 3. Porter vers RISC-V (Mission de l'offre).
@@ -82,7 +82,7 @@ docker run --rm -v "$PWD":/work -w /work \
   cargo build --release --target riscv64gc-unknown-linux-musl
 ```
 
-✅ Compilation **riscv64gc-musl** réussie (portabilité démontrée).
+✅ Compilation **riscv64gc-musl** réussie (Portabilité démontrée).
 
 ---
 
