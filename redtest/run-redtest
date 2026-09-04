@@ -1,0 +1,84 @@
+#!/bin/bash
+# run-redtest - tests d'intégration redpesk pour secure-telemetry-node.
+#
+# Exécuté par la plateforme redpesk sur la cible (VM QEMU x86_64) APRÈS
+# installation du package principal et du package -redtest. Le script vérifie
+# que le daemon :
+#   1. démarre et installe son sandbox seccomp (no-new-privs + filtre BPF) ;
+#   2. répond en HTTP avec un heartbeat valide.
+#
+# Sortie : standard TAP (Test Anything Protocol), redirigée vers un fichier
+# .tap dans /var/log/redtest/<package>/ comme exigé par redpesk (et affichée
+# sur stdout pour la console live de la plateforme).
+#
+# Note : le filtre seccomp du daemon limite l'écriture fichier, mais le daemon
+# est un sous-processus distinct ; ce script écrit librement son rapport TAP.
+
+PACKAGE_NAME="secure-telemetry-node"
+PORT=5555
+OUT_DIR="/var/log/redtest/${PACKAGE_NAME}"
+TAP_FILE="${OUT_DIR}/stn.tap"
+LOG_FILE="${OUT_DIR}/stn-daemon.log"
+TMP_TAP="/tmp/stn-${$}.tap"
+
+mkdir -p "${OUT_DIR}"
+
+# La sortie TAP est écrite à la fois sur stdout (console redpesk) et dans le
+# fichier .tap attendu.
+exec 3>&1
+exec > >(tee "${TMP_TAP}" >&3)
+
+pass=0
+fail=0
+
+tap() {
+    # tap <resultat: ok|not ok> <num> <description>
+    echo "$1 $2 - $3"
+    if [ "$1" = "ok" ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1))
+    fi
+}
+
+cleanup() {
+    [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
+    # Déplace le rapport TAP vers le répertoire redtest attendu.
+    cp -a "${TMP_TAP}" "${TAP_FILE}" 2>/dev/null || true
+}
+
+trap cleanup EXIT
+
+# --- Démarrage du daemon -----------------------------------------------
+systemctl start secure-telemetry-node 2>/dev/null || true
+sleep 1
+
+DAEMON=$(command -v secure-telemetry-node || echo /usr/sbin/secure-telemetry-node)
+if ! pgrep -f "${DAEMON}" >/dev/null 2>&1; then
+    "${DAEMON}" --port=${PORT} > "${LOG_FILE}" 2>&1 &
+    DPID=$!
+    sleep 1
+fi
+
+echo "TAP version 13"
+
+# --- Test 1 : le sandbox seccomp est actif -----------------------------
+if grep -q "seccomp filter actif" "${LOG_FILE}" 2>/dev/null; then
+    tap "ok" 1 "sandbox seccomp actif (filtre BPF + no-new-privs)"
+else
+    tap "not ok" 1 "sandbox seccomp actif (filtre BPF + no-new-privs)"
+fi
+
+# --- Test 2 : le daemon répond en HTTP avec un heartbeat ---------------
+RESP=$(curl -s --max-time 3 "http://127.0.0.1:${PORT}/" 2>/dev/null)
+if echo "${RESP}" | grep -q "cpu_temp" && echo "${RESP}" | grep -q "free_mem_kb"; then
+    tap "ok" 2 "réponse HTTP du daemon (heartbeat valide)"
+else
+    tap "not ok" 2 "réponse HTTP du daemon (heartbeat valide)"
+fi
+
+# --- Récapitulatif TAP -------------------------------------------------
+echo "1..2"
+echo "# ${pass} passed, ${fail} failed"
+
+[ "${fail}" -eq 0 ]

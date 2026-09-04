@@ -68,6 +68,13 @@ install -D -m 0755 %{_builddir}/%{name}-%{version}/target/%{rust_triple}/release
 install -D -m 0644 %{_builddir}/%{name}-%{version}/packaging/secure-telemetry-node.service \
     %{buildroot}/usr/lib/systemd/system/secure-telemetry-node.service
 
+# --- Subpackage redtest (tests d'intégration redpesk) ---
+# Le script run-redtest est installé dans /usr/libexec/redtest/<package>/, comme
+# attendu par la plateforme redpesk pour les tests embarqués (VM QEMU).
+mkdir -p %{buildroot}%{_libexecdir}/redtest/%{name}/
+cp -a %{_builddir}/%{name}-%{version}/redtest/. %{buildroot}%{_libexecdir}/redtest/%{name}/
+chmod +x %{buildroot}%{_libexecdir}/redtest/%{name}/run-redtest
+
 %check
 # Test robuste : le daemon doit démarrer, installer son sandbox seccomp et
 # RÉPONDRE en HTTP (preuve de compilation + exécution + politique active).
@@ -111,9 +118,26 @@ exit 0
 %{_sbindir}/secure-telemetry-node
 /usr/lib/systemd/system/secure-telemetry-node.service
 
+# --- Subpackage redtest : contenu du package -redtest ---
+%package redtest
+Summary:        Tests d'intégration redpesk (TAP) pour %{name}
+Requires:       %{name} = %{version}-%{release}
+Requires:       curl
+
+%description redtest
+Tests d'intégration exécutés par la plateforme redpesk sur cible virtuelle
+(QEMU). Vérifie le démarrage du daemon, l'activation du sandbox seccomp et la
+réponse HTTP. Sortie au format TAP (Test Anything Protocol).
+
+%files redtest
+%defattr(-,root,root)
+%{_libexecdir}/redtest/%{name}/*
+
 %post
 systemctl daemon-reload || true
 
 %changelog
+* Thu Sep 04 2026 Parad1gm <parad1gm_0xFF@gmail.com> - 0.1.0-1
+- Ajout du subpackage -redtest (tests d'intégration TAP exécutés par redpesk).
 * Wed Sep 02 2026 Parad1gm <parad1gm_0xFF@gmail.com> - 0.1.0-1
 - Variante redpesk factory : compilation a la source via Cargo.
