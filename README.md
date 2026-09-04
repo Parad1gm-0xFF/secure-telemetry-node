@@ -152,6 +152,8 @@ Voir `kernel/README.md` pour le détail. Le dépôt embarque :
 Le specfile compile le code Rust dans la factory et exécute un `%check` qui
 vérifie le **démarrage + réponse HTTP** sous sandbox, puis le **self-test SIGSYS**
 (non bloquant si seccomp est indisponible dans l'environnement de build).
+Le spec produit deux paquets : le daemon (`secure-telemetry-node`) et le paquet
+de test (`secure-telemetry-node-redtest`) exécuté par la plateforme.
 
 Les RPM ne sont plus commités : la CI les produit comme artefacts (GitHub
 Actions). Localement :
@@ -161,6 +163,35 @@ docker run --rm -v "$PWD/.rpmbuild":/rpmbuild -w /rpmbuild almalinux:9 \
   bash -c 'dnf install -y rpm-build cargo && rpmbuild --define "_topdir /rpmbuild" \
   -bb SPECS/secure-telemetry-node.spec'
 ```
+
+---
+
+## Build & audits sur la plateforme redpesk
+
+Le projet est industrialisé sur la **redpesk factory Community**
+(`community-app.redpesk.bzh`, compte gratuit), via `rp-cli`. Résultats au
+04/09/2026 :
+
+| Étape | Commande | Résultat |
+|---|---|---|
+| Build (x86_64, distro corn 3.0) | `rp-cli applications build secure-telemetry-node` | ✅ `done` |
+| `%check` (sandbox actif + HTTP) | intégré au build | ✅ `test OK (sandbox actif + réponse HTTP)` + `test seccomp OK (écriture refusée par SIGSYS)` |
+| RPM produits | build log | ✅ `secure-telemetry-node-...rpm` + `secure-telemetry-node-redtest-...rpm` |
+| Audit statique clang-tidy | `rp-cli applications audit` | ✅ **0 vulnérabilité** (après exclusion de `kernel/stn-sensor.c`, module noyau non analysable en user-space) |
+| Tests embarqués (QEMU) | `rp-cli applications test` | ⏸ bloqués par la plateforme (échec au déploiement de la VM, `boot.log` illisible : erreur serveur `read on closed response body`, 0 test exécuté) |
+
+Détails honnêtes :
+
+- **Audit** : l'audit initial signalait un « High » sur `kernel/stn-sensor.c`
+  (`linux/miscdevice.h` introuvable). C'est un **artefact d'environnement** : le
+  module noyau se compile contre les headers kernel de la cible Yocto, absents de
+  l'environnement d'audit user-space de redpesk. Le fichier est donc exclu de
+  l'audit applicatif (le code C du module est analysable dans son propre build
+  kernel). Le reste du dépôt est audité sans vulnérabilité.
+- **Tests** : le subpackage `-redtest` est bien produit et installé dans
+  `/usr/libexec/redtest/secure-telemetry-node/` (`run-redtest` au format TAP).
+  L'exécution sur cible QEMU est en attente de disponibilité de l'infrastructure
+  Community (échec au boot de la VM, sans rapport avec l'application).
 
 ---
 
