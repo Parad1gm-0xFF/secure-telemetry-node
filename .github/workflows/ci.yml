@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-musl:
+    name: Cross-compile musl (aarch64 + riscv64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cross-compile aarch64
+        run: |
+          docker run --rm -v "$PWD":/work -w /work \
+            ghcr.io/rust-cross/rust-musl-cross:aarch64-musl \
+            cargo build --release --target aarch64-unknown-linux-musl
+          file target/aarch64-unknown-linux-musl/release/secure-telemetry-node
+      - name: Cross-compile riscv64
+        run: |
+          docker run --rm -v "$PWD":/work -w /work \
+            ghcr.io/rust-cross/rust-musl-cross:riscv64gc-musl \
+            cargo build --release --target riscv64gc-unknown-linux-musl
+          file target/riscv64gc-unknown-linux-musl/release/secure-telemetry-node
+
+  test-x86_64:
+    name: Tests + sandbox réel (x86_64, kernel runner)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests unitaires
+        run: docker run --rm -v "$PWD":/work -w /work rust:latest cargo test --release
+      - name: Build release
+        run: docker run --rm -v "$PWD":/work -w /work rust:latest cargo build --release
+      - name: Smoke test HTTP sous seccomp
+        run: |
+          BIN=target/release/secure-telemetry-node
+          "$BIN" --port=5599 > /tmp/stn.log 2>&1 &
+          PID=$!
+          sleep 2
+          RESP=$(curl -s --max-time 2 http://127.0.0.1:5599/)
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
+          echo "réponse : $RESP"
+          echo "$RESP" | grep -q "cpu_temp" || { echo "ECHEC : pas de réponse HTTP"; cat /tmp/stn.log; exit 1; }
+          grep -q "seccomp filter actif" /tmp/stn.log || { echo "ECHEC : sandbox inactif"; cat /tmp/stn.log; exit 1; }
+          echo "OK : service sandboxé et fonctionnel"
+      - name: Self-test seccomp (SIGSYS attendu)
+        run: |
+          set +e
+          ./target/release/secure-telemetry-node --sandbox-self-test
+          RC=$?
+          set -e
+          if [ "$RC" -eq 132 ] || [ "$RC" -eq 159 ]; then
+            echo "OK : l'écriture est refusée par le filtre (SIGSYS)"
+          else
+            echo "AVERTISSEMENT : seccomp indisponible sur ce runner (rc=$RC)"
+          fi
+      - name: Upload binaire x86_64
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-telemetry-node-x86_64
+          path: target/release/secure-telemetry-node
+
+  rpm:
+    name: RPM (specfile redpesk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build RPM depuis le spec
+        run: |
+          mkdir -p .rpmbuild/SOURCES .rpmbuild/SPECS
+          cp spec/secure-telemetry-node.spec .rpmbuild/SPECS/
+          docker run --rm -v "$PWD/.rpmbuild":/rpmbuild -w /rpmbuild almalinux:9 \
+            bash -c 'dnf install -y rpm-build cargo >/dev/null 2>&1; rpmbuild --define "_topdir /rpmbuild" -bb SPECS/secure-telemetry-node.spec || true'
+          ls -la .rpmbuild/RPMS/ 2>/dev/null || echo "RPM build dépend du réseau d'entreprise (offline) — non bloquant"

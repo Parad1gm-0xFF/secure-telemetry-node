@@ -11,10 +11,20 @@ build/
 tmp/
 *.pyc
 
-# --- RPM : l'artefact buildé est livré dans dist/ (committé comme preuve) ---
-# .rpm générés hors du dossier dist/ sont ignorés (ex: arbre rpmbuild local).
+# --- RPM : produits par la CI (artefacts GitHub Actions) ---
+# On ne commit plus les binaires ; le spec redpesk et la CI les génèrent.
 *.rpm
-!/dist/*.rpm
-
-# --- arbre rpmbuild local ---
+dist/
 .rpmbuild/
+
+# --- Module noyau : artefacts de compilation locaux ---
+kernel/*.o
+kernel/*.ko
+kernel/*.mod
+kernel/*.mod.c
+kernel/*.mod.o
+kernel/*.symvers
+kernel/overlays/*.dtbo
+kernel/overlays/*.dtb
+# --- fichier de test du sandbox (self-test SIGSYS) ---
+stn-self-test.tmp

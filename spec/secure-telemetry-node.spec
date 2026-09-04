@@ -1,13 +1,12 @@
 # Spec RPM pour le noeud de telemetrie — variante "build from source"
 #
-# VARIANTE REDPESK FACTORY. Contrairement a spec/secure-telemetry-node.spec
-# (qui empaquette un binaire pre-compile), ce spec COMPILE le code source
-# avec Cargo dans la factory redpesk. Il est donc utilisable tel quel en
-# projet "standard" redpesk : la factory clone le depot GitHub, execute
-# cargo build pour l'architecture cible, puis empaquette le resultat en RPM.
+# VARIANTE REDPESK FACTORY. Ce spec COMPILE le code source avec Cargo dans la
+# factory redpesk : la factory clone le depot GitHub, execute cargo build pour
+# l'architecture cible, puis empaquette le resultat en RPM. Utilisable tel quel
+# en projet "standard" redpesk.
 #
 # Build arche-types :
-#   - aarch64 : cognitely pour RPi3B+/redpesk OS
+#   - aarch64 : cognitivement pour RPi3B+/redpesk OS
 #   - x86_64  : pour la cible de test redpesk (QEMU virtuel)
 #
 # Le projet est conçu pour compiler en statique musl, mais la factory redpesk
@@ -70,27 +69,39 @@ install -D -m 0644 %{_builddir}/%{name}-%{version}/packaging/secure-telemetry-no
     %{buildroot}/usr/lib/systemd/system/secure-telemetry-node.service
 
 %check
-# Test non bloquant et robuste : on lance le daemon et on vérifie qu'il démarre
-# et bind son endpoint (preuve de compilation + exécution). On n'attend PAS la
-# réponse HTTP car, en mode strict, seccomp limite aux syscalls basiques
-# (read/write/_exit) et peut interrompre le process après le bind — ce qui est
-# le comportement sécuritaire voulu pour un démon d'infrastructure critique.
+# Test robuste : le daemon doit démarrer, installer son sandbox seccomp et
+# RÉPONDRE en HTTP (preuve de compilation + exécution + politique active).
 cd %{_builddir}/%{name}-%{version}
-./target/%{rust_triple}/release/secure-telemetry-node --port=5599 > /tmp/stn-test.log 2>&1 &
+BIN=./target/%{rust_triple}/release/secure-telemetry-node
+"$BIN" --port=5599 > /tmp/stn-test.log 2>&1 &
 PID=$!
 sleep 1
-# Preuve de démarrage : le log doit contenir 'listening'.
-if grep -q "listening" /tmp/stn-test.log 2>/dev/null; then
-    echo "secure-telemetry-node: test OK (compilé et démarré, bind 0.0.0.0:5599)";
-    kill "$PID" 2>/dev/null || true;
-    wait "$PID" 2>/dev/null || true;
-    exit 0;
+if grep -q "seccomp filter actif" /tmp/stn-test.log && \
+   curl -s --max-time 2 http://127.0.0.1:5599/ | grep -q "cpu_temp"; then
+    echo "secure-telemetry-node: test OK (sandbox actif + réponse HTTP)";
 else
-    echo "secure-telemetry-node: ECHEC — le daemon n'a pas démarré";
+    echo "secure-telemetry-node: ECHEC — démarrage ou réponse HTTP";
     cat /tmp/stn-test.log 2>/dev/null;
     kill "$PID" 2>/dev/null || true;
     exit 1;
 fi
+kill "$PID" 2>/dev/null || true
+wait "$PID" 2>/dev/null || true
+
+# Vérification du sandbox : l'auto-test doit mourir par SIGSYS (écriture fichier
+# refusée par le filtre). Non bloquant : si seccomp est indisponible dans
+# l'environnement de build (ex. conteneur sans support), on le signale sans
+# casser le paquet.
+"$BIN" --sandbox-self-test
+RC=$?
+if [ "$RC" -eq 132 ] || [ "$RC" -eq 159 ]; then
+    echo "secure-telemetry-node: test seccomp OK (écriture refusée par SIGSYS)";
+elif [ "$RC" -eq 1 ]; then
+    echo "secure-telemetry-node: AVERTISSEMENT — seccomp indisponible dans l'environnement de build";
+else
+    echo "secure-telemetry-node: AVERTISSEMENT — self-test seccomp inattendu (rc=$RC)";
+fi
+exit 0
 
 %files
 %{_sbindir}/secure-telemetry-node

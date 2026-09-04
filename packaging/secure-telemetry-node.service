@@ -3,21 +3,34 @@ Description=Secure Telemetry Node (télémétrie sécurisée)
 After=network.target
 
 [Service]
-# Binaire statique : pas de LD_LIBRARY_PATH nécessaire.
-ExecStart=/usr/sbin/secure-telemetry-node --port=5555
+# Binaire statique : pas de LD_LIBRARY_PATH nécessaire. L'écoute se fait sur
+# toutes les interfaces (nœud embarqué) ; le défaut applicatif est 127.0.0.1.
+ExecStart=/usr/sbin/secure-telemetry-node --port=5555 --addr=0.0.0.0
 Restart=on-failure
 RestartSec=3
 User=telemetry
 Group=telemetry
 
-# Sécurité noyau (durcissement systemd, complément du seccomp applicatif).
+# --- Durcissement systemd (complément du seccomp applicatif du démon) ---
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectProc=inaccessible
 RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+MemoryDenyWriteExecute=true
+# Filtre syscall systemd (le démon applique déjà son propre filtre BPF plus
+# strict ; @system-service couvre réseau, fichiers, signaux et timers).
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
 
 [Install]
 WantedBy=multi-user.target

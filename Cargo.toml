@@ -7,13 +7,18 @@ license = "Apache-2.0"
 
 # Cibles : aarch64-unknown-linux-musl (RPi3B+/arm64), riscv64gc-unknown-linux-musl.
 # Aucune dépendance externe : prctl est déclaré en FFI direct dans le code
-# (pas de crates.io requis — la redpesk factory peut builder sans réseau).
+# (pas de crates.io requis, la redpesk factory peut builder sans réseau).
 [[bin]]
 name = "secure-telemetry-node"
 path = "src/main.rs"
 
+# NOTE sur opt-level : la valeur "s" (taille) casse la SONDE de détection
+# seccomp (les fonctions probe_child/probe_args_offset passent par fork ; une
+# optimisation de taille trop agressive produit un code erroné post-fork).
+# opt-level = 2/3 est nécessaire au bon fonctionnement du fork. Le binaire
+# reste très compact (std seul, aucune dépendance).
 [profile.release]
-opt-level = "s"
+opt-level = 2
 lto = true
 codegen-units = 1
 strip = true

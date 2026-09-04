@@ -1,0 +1,47 @@
+// stn-status.dts - overlay Device Tree pour Raspberry Pi 3B+ (bcm2837)
+//
+// Ajoute à la carte :
+//   1. une LED d'état "STN" pilotable (driver gpio-leds du kernel RPi) sur
+//      GPIO 17, que le daemon peut allumer/éteindre via /sys/class/gpio ;
+//   2. un nœud de pseudo-capteur qui documente l'emplacement matériel que
+//      stn-sensor pourrait adresser sur une carte industrielle.
+//
+// Compilation (dtc) :
+//   dtc -I dts -O dtb -o stn-status.dtbo stn-status.dts
+// Activation (Raspberry Pi) : copier stn-status.dtbo dans /boot/overlays/
+//   puis ajouter dans /boot/config.txt :
+//     dtoverlay=stn-status
+//
+// Le format overlay utilise /plugin/ (fragments avec target), standard pour
+// les overlays de la fondation Raspberry Pi.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "raspberrypi,3-model-b", "raspberrypi,3-model-b-plus";
+
+    // Fragment 1 : déclare la LED d'état sur le bus gpio-leds.
+    fragment@0 {
+        target = <&leds>;
+        __overlay__ {
+            stn_status: led-stn {
+                label = "STN";
+                gpios = <&gpio 17 1>;
+                default-state = "keep";
+            };
+        };
+    };
+
+    // Fragment 2 : nœud de pseudo-capteur (stn-sensor), pour documenter le
+    // lien BSP <-> applicatif sur une carte industrielle.
+    fragment@1 {
+        target = <&gpio>;
+        __overlay__ {
+            stn-sensor {
+                compatible = "stn,sensor";
+                temperature = <&gpio 4>;
+            };
+        };
+    };
+};
