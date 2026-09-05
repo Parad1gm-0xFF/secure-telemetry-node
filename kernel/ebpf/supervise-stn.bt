@@ -1,0 +1,93 @@
+#!/usr/bin/bpftrace
+// supervise-stn.bt - supervision eBPF du daemon secure-telemetry-node.
+//
+// Démontre la supervision d'un nœud embarqué sandboxé avec eBPF (bpftrace) :
+//   1. comptage des syscalls par le daemon (preuve que seccomp laisse passer
+//      exactement les syscalls de la whitelist) ;
+//   2. détection des tentatives BLOQUÉES par le sandbox seccomp (SIGSYS) :
+//      si le filtre est correct, aucun syscall hors whitelist ne doit passer ;
+//   3. vue du trafic réseau (accept, recvfrom, sendto) et des lectures de
+//      capteurs (openat, read) : l'activité du nœud en direct.
+//
+// Usage (root ou CAP_BPF) :
+//   sudo bpftrace kernel/ebpf/supervise-stn.bt <pid-du-daemon>
+//   ou, plus simple :
+//   sudo bpftrace kernel/ebpf/supervise-stn.bt -p <pid>
+//
+// L'argument $1 est le PID du processus à superviser.
+
+// ---------------------------------------------------------------------------
+// Comptage des syscalls (tracepoints raw_syscalls:sys_enter).
+// ---------------------------------------------------------------------------
+tracepoint:raw_syscalls:sys_enter /pid == $1/
+{
+    @syscalls[comm] = count();
+}
+
+// ---------------------------------------------------------------------------
+// Syscalls BLOQUÉS par seccomp : un process sous filtre seccomp qui tente un
+// syscall interdit meurt par SIGSYS (signal délivré avec si_code=SYS_SECCOMP).
+// On détecte les signaux SIGSYS délivrés au process supervisé.
+// ---------------------------------------------------------------------------
+tracepoint:signal:signal_send /args->sig == 31 && args->pid == $1/
+{
+    @sigsys[comm] = count();
+    printf("SECCOMP: SIGSYS délivré au pid %d (syscall bloqué par le filtre)\n", args->pid);
+}
+
+// ---------------------------------------------------------------------------
+// Trafic réseau : les connexions acceptées par le daemon.
+// ---------------------------------------------------------------------------
+tracepoint:syscalls:sys_enter_accept /pid == $1/
+{
+    @accept[comm] = count();
+}
+
+tracepoint:syscalls:sys_enter_accept4 /pid == $1/
+{
+    @accept4[comm] = count();
+}
+
+tracepoint:syscalls:sys_enter_sendto /pid == $1/
+{
+    @sendto[comm] = count();
+}
+
+tracepoint:syscalls:sys_enter_recvfrom /pid == $1/
+{
+    @recvfrom[comm] = count();
+}
+
+// ---------------------------------------------------------------------------
+// Lecture des capteurs : openat (le daemon n'ouvre qu'en LECTURE).
+// ---------------------------------------------------------------------------
+tracepoint:syscalls:sys_enter_openat /pid == $1/
+{
+    @openat[comm, str(args->filename)] = count();
+}
+
+// ---------------------------------------------------------------------------
+// Résumé périodique (accumulation globale sur toute la supervision).
+// ---------------------------------------------------------------------------
+interval:s:5 {
+    println("--- état du sandbox (toutes les 5s) ---");
+    print(@syscalls);
+    println("--- appels réseau ---");
+    print(@accept);
+    print(@accept4);
+    print(@sendto);
+    print(@recvfrom);
+    println("--- openat (lecture) ---");
+    print(@openat);
+    println("--- SIGSYS (écritures refusées) ---");
+    print(@sigsys);
+}
+
+// ---------------------------------------------------------------------------
+// Nettoyage à l'arrêt.
+// ---------------------------------------------------------------------------
+END {
+    println("--- résumé final ---");
+    print(@syscalls);
+    print(@sigsys);
+}

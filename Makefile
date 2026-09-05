@@ -1,5 +1,5 @@
 # Métas du dépôt : compilation, tests, exécution QEMU, versant kernel.
-.PHONY: build build-aarch64 build-riscv64 test run-qemu kernel help
+.PHONY: build build-aarch64 build-riscv64 test run-qemu kernel ebpf help
 
 help:
 	@echo "Cibles :"
@@ -9,7 +9,11 @@ help:
 	@echo "  build-riscv64  Cross-compile Rust -> riscv64gc-unknown-linux-musl"
 	@echo "  run-qemu       Execute le binaire ARM sous qemu-aarch64 (sans carte)"
 	@echo "  kernel         Build du module noyau + overlay (voir kernel/)"
+	@echo "  ebpf           Supervision eBPF du daemon (bpftrace, root requis)"
 	@echo "  flash-rpi3     Ecrire l'image Yocto sur la carte SD RPi3B+"
+
+ebpf:
+	$(MAKE) -C kernel ebpf
 
 build:
 	docker run --rm -v "$$PWD":/work -w /work rust:latest cargo build --release

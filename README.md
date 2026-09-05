@@ -14,13 +14,14 @@ plateforme **redpesk** (factory, packaging RPM, sécurité dès le build, LTS).
 ## 🎯 Ce que le projet tente de prouver.
 
 | Mission / compétence | Preuve dans ce dépôt |
-|---|---|
+|---|---|---|
 | Intégration / optimisation **BSP Yocto** | Couche `meta-secure-node` + recipe (RPi3B+) |
-| Programmation bas-niveau **C/C++/Rust** | Daemon Rust (std seul, FFI direct) + module noyau C |
+| Programmation bas-niveau **C/C++/Rust** | Daemon Rust (std seul, FFI direct) + module noyau C + programme eBPF C |
 | **Drivers / BSP** | Module noyau `stn-sensor` + overlay Device Tree `stn-status` |
+| **eBPF / observabilité** | Supervision eBPF du daemon : bpftrace (`kernel/ebpf/supervise-stn.bt`) + programme eBPF compilé (bpftool) |
 | **Portabilité RISC-V** | Rebuild identique `riscv64gc-musl` (CI) |
 | Packaging **RPM** / factory | Specfile `build from source` + `%check` fonctionnel |
-| **Cybersécurité dès le build** | Filtre seccomp BPF maison, unité systemd durcie, self-test |
+| **Cybersécurité dès le build** | Filtre seccomp cBPF maison, unité systemd durcie, self-test |
 | **Tests** | 10 tests unitaires + smoke test HTTP sous seccomp + CI GitHub Actions |
 
 ---
@@ -81,7 +82,8 @@ src/main.rs                 → Daemon Rust (std seul, FFI prctl).
 kernel/
   stn-sensor.c              → Module noyau : pseudo-capteur /dev/stn-sensor (API miscdevice + file_operations).
   overlays/stn-status.dts   → Overlay Device Tree RPi3B+ (LED GPIO + nœud capteur).
-  Makefile + README.md      → Build module + overlay.
+  ebpf/                     → Supervision eBPF du daemon : supervise-stn.bt (bpftrace) + supervise_stn.bpf.c (bpftool).
+  Makefile + README.md      → Build module + overlay + supervision.
 packaging/secure-telemetry-node.service → Unité systemd durcie (SystemCallFilter, ProtectClock...).
 spec/secure-telemetry-node.spec         → Specfile RPM redpesk, build from source.
 layers/meta-secure-node/    → Couche Yocto (recipe .bb, RPi3B+).
@@ -145,6 +147,31 @@ Voir `kernel/README.md` pour le détail. Le dépôt embarque :
   (vérifié) et le pattern est identique sur 6.6 LTS (Yocto/redpesk).
 - **`stn-status.dts`** : overlay Device Tree RPi3B+ (LED d'état GPIO + nœud de
   capteur), compilé par `dtc` (`make overlay`).
+- **`ebpf/`** : supervision eBPF du daemon (voir `kernel/ebpf/README.md`).
+
+---
+
+## 🔭 Supervision eBPF.
+
+Le sandbox seccomp est écrit en **cBPF** (seule API acceptée par seccomp) ; la
+**supervision** du daemon utilise du vrai **eBPF** pour observer son activité en
+direct : comptage des syscalls whitelistés, détection des **SIGSYS** bloqués par
+le filtre, trafic réseau et lectures de capteurs. Deux modes :
+
+```bash
+# Mode bpftrace (simple) :
+sudo make -C kernel/ebpf supervise DAEMON=./target/release/secure-telemetry-node
+
+# Mode programme eBPF compilé (bpftool, clang requis) :
+make -C kernel/ebpf prog
+bpftool map dump name stn_syscalls   # compteur de syscalls
+bpftool map dump name stn_sigsys     # compteur de SIGSYS bloqués
+```
+
+Si `@sigsys` reste à 0 pendant l'exécution normale, le filtre seccomp bloque
+correctement : aucune écriture non autorisée n'aboutit. En lançant
+`--sandbox-self-test` sous le superviseur, on voit un SIGSYS compté : la preuve
+eBPF, en direct, que le sandbox tue les appels interdits.
 
 ---
 

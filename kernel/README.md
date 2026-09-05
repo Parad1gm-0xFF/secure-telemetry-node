@@ -8,8 +8,9 @@ Kernel/BSP), en complément du daemon applicatif (`src/`).
 | Fichier | Rôle |
 |---|---|
 | `stn-sensor.c` | Driver noyau d'exemple : pseudo-capteur exposé en `/dev/stn-sensor` (lecture = valeur simulée en milli-degrés). Cycle de vie complet : `module_init`, `misc_register`, callback de lecture, `misc_deregister`. |
-| `Makefile` | Build du module contre le kernel courant, compilation de l'overlay Device Tree. |
+| `Makefile` | Build du module contre le kernel courant, compilation de l'overlay Device Tree, cible `ebpf`. |
 | `overlays/stn-status.dts` | Overlay Device Tree RPi3B+ : ajoute une LED d'état (gpio-leds) et un nœud de pseudo-capteur (lien BSP <-> applicatif). |
+| `ebpf/` | Supervision eBPF du daemon (bpftrace + programme eBPF compilé bpftool). Voir `ebpf/README.md`. |
 
 ## Build
 
@@ -19,6 +20,9 @@ make
 
 # Overlay Device Tree (besoin de dtc) :
 make overlay
+
+# Supervision eBPF du daemon (bpftrace, root requis) :
+make ebpf
 
 # Cross pour la cible embarquée (ex. SDK Yocto/redpesk) :
 make KERNELDIR=<kernel-build-dir> ARCH=arm64 CROSS_COMPILE=aarch64-linux-

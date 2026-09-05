@@ -26,5 +26,7 @@ kernel/*.mod.o
 kernel/*.symvers
 kernel/overlays/*.dtbo
 kernel/overlays/*.dtb
+# --- eBPF : binaire compilé (clang) ---
+kernel/ebpf/*.o
 # --- fichier de test du sandbox (self-test SIGSYS) ---
 stn-self-test.tmp
