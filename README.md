@@ -11,7 +11,7 @@ plateforme **redpesk** (factory, packaging RPM, sécurité dès le build, LTS).
 
 ---
 
-## 🎯 Ce que le projet prouve
+## 🎯 Ce que le projet tente de prouver.
 
 | Mission / compétence | Preuve dans ce dépôt |
 |---|---|
