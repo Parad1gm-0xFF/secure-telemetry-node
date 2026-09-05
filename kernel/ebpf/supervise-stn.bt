@@ -73,16 +73,16 @@ tracepoint:syscalls:sys_enter_openat /pid == $1/
 // Résumé périodique (accumulation globale sur toute la supervision).
 // ---------------------------------------------------------------------------
 interval:s:5 {
-    println("--- état du sandbox (toutes les 5s) ---");
+    printf("--- état du sandbox (toutes les 5s) ---\n");
     print(@syscalls);
-    println("--- appels réseau ---");
+    printf("--- appels réseau ---\n");
     print(@accept);
     print(@accept4);
     print(@sendto);
     print(@recvfrom);
-    println("--- openat (lecture) ---");
+    printf("--- openat (lecture) ---\n");
     print(@openat);
-    println("--- SIGSYS (écritures refusées) ---");
+    printf("--- SIGSYS (écritures refusées) ---\n");
     print(@sigsys);
 }
 
@@ -90,7 +90,7 @@ interval:s:5 {
 // Nettoyage à l'arrêt.
 // ---------------------------------------------------------------------------
 END {
-    println("--- résumé final ---");
+    printf("--- résumé final ---\n");
     print(@syscalls);
     print(@sigsys);
 }
