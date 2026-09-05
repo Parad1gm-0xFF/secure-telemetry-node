@@ -7,7 +7,7 @@
 //
 // Ce que le programme fait :
 //   - compte les syscalls du daemon (tracepoint raw_syscalls:sys_enter) ;
-//   - compte les signaux SIGSYS délivrés (tracepoint signal:signal_send) :
+//   - compte les signaux SIGSYS générés (tracepoint signal:signal_generate) :
 //     c'est la preuve que seccomp BLOQUE réellement des appels (écritures).
 //
 // Compilation (voir Makefile) :
@@ -35,12 +35,15 @@ struct tracepoint_raw_syscalls_sys_enter {
     __u16 id;
 };
 
-// signal:signal_send : champs publics (sig, pid) documentés.
-struct tracepoint_signal_signal_send {
+// signal:signal_generate : champs publics documentés (sig, info, task, group,
+// result). Le PID du process courant (celui qui génère le signal) s'obtient
+// avec bpf_get_current_pid_tgid().
+struct tracepoint_signal_signal_generate {
     __s32 sig;
-    __s32 pid;
-    __u32 group;
-    __u32 priv;
+    __s64 info;
+    __s64 task;
+    __s32 group;
+    __s32 result;
 };
 
 // Maps de comptage (clé = PID, valeur = compteur).
@@ -78,13 +81,15 @@ int count_syscall(struct tracepoint_raw_syscalls_sys_enter *args)
     return 0;
 }
 
-// Tracepoint signal:signal_send : SIGSYS délivré = syscall bloqué par seccomp.
-SEC("tracepoint/signal/signal_send")
-int count_sigsys(struct tracepoint_signal_signal_send *args)
+// Tracepoint signal:signal_generate : SIGSYS généré = syscall bloqué par seccomp.
+// Le PID du process fautif (celui qui génère le SIGSYS) est obtenu via le
+// helper bpf_get_current_pid_tgid().
+SEC("tracepoint/signal/signal_generate")
+int count_sigsys(struct tracepoint_signal_signal_generate *args)
 {
     if (args->sig != 31)   // SIGSYS
         return 0;
-    __u32 pid = (__u32)args->pid;
+    __u32 pid = (__u32)(bpf_get_current_pid_tgid() >> 32);
     inc_counter(&stn_sigsys, pid);
     return 0;
 }

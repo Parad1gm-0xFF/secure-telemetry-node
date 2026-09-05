@@ -26,13 +26,16 @@ tracepoint:raw_syscalls:sys_enter /pid == $1/
 
 // ---------------------------------------------------------------------------
 // Syscalls BLOQUÉS par seccomp : un process sous filtre seccomp qui tente un
-// syscall interdit meurt par SIGSYS (signal délivré avec si_code=SYS_SECCOMP).
-// On détecte les signaux SIGSYS délivrés au process supervisé.
+// syscall interdit meurt par SIGSYS (généré par le kernel, si_code=SYS_SECCOMP).
+// On détecte les SIGSYS générés pour le process supervisé. Le tracepoint
+// signal:signal_generate (source : include/trace/events/signal.h) expose les
+// args sig/info/task/group/result ; le PID du process courant est le builtin
+// `pid` de bpftrace (le process fautif est celui qui génère le SIGSYS).
 // ---------------------------------------------------------------------------
-tracepoint:signal:signal_send /args->sig == 31 && args->pid == $1/
+tracepoint:signal:signal_generate /args->sig == 31 && pid == $1/
 {
     @sigsys[comm] = count();
-    printf("SECCOMP: SIGSYS délivré au pid %d (syscall bloqué par le filtre)\n", args->pid);
+    printf("SECCOMP: SIGSYS généré pour le pid %d (syscall bloqué par le filtre)\n", pid);
 }
 
 // ---------------------------------------------------------------------------
