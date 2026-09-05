@@ -171,14 +171,14 @@ docker run --rm -v "$PWD/.rpmbuild":/rpmbuild -w /rpmbuild almalinux:9 \
 
 Le projet est industrialisé sur la **redpesk factory Community**
 (`community-app.redpesk.bzh`, compte gratuit), via `rp-cli`. Résultats au
-04/09/2026 :
+05/09/2026 (code corrigé, commit `g2d9d6c3`) :
 
 | Étape | Commande | Résultat |
 |---|---|---|
 | Build (x86_64, distro corn 3.0) | `rp-cli applications build secure-telemetry-node` | ✅ `done` |
 | `%check` (sandbox actif + HTTP) | intégré au build | ✅ `test OK (sandbox actif + réponse HTTP)` + `test seccomp OK (écriture refusée par SIGSYS)` |
 | RPM produits | build log | ✅ `secure-telemetry-node-...rpm` + `secure-telemetry-node-redtest-...rpm` |
-| Audit statique clang-tidy | `rp-cli applications audit` | ✅ **0 vulnérabilité** (après exclusion de `kernel/stn-sensor.c`, module noyau non analysable en user-space) |
+| Audit statique clang-tidy | `rp-cli applications audit --exclude stn-sensor.c` | ✅ **0 vulnérabilité** (module noyau non analysable en user-space) |
 | Tests embarqués (QEMU) | `rp-cli applications test` | ⏸ bloqués par la plateforme (échec au déploiement de la VM, `boot.log` illisible : erreur serveur `read on closed response body`, 0 test exécuté) |
 
 Détails et modérations :
