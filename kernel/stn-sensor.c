@@ -9,42 +9,45 @@
 // de périphérique (misc_register), opération de lecture, déchargement
 // (module_exit). Aucune allocation, aucun état global : modèle simple et sûr.
 //
-// CIBLE : kernels 6.x LTS (Yocto/redpesk Scarthgap 6.6, la cible embarquée).
-// ATTENTION compatibilité : le kernel 7.0 a refondu l'API miscdevice (le
-// callback read est déplacé dans un `struct file_operations *fops`) et le
-// noyau 6.11 a réorganisé les callbacks dans un sous-struct `params`. Comme
-// pour seccomp (voir src/main.rs), ces évolutions d'API sont réelles : ce
-// module cible délibérément l'API 6.x LTS des BSP industriels et refuse de
-// compiler sur une API non couverte plutôt que de produire un binaire faux.
+// API miscdevice : l'interface est stable depuis longtemps. La structure
+// `miscdevice` référence une table `struct file_operations *fops` (depuis
+// v4.19 au moins, inchangée sur 6.x et 7.x). Les opérations (read, write...)
+// se déclarent dans cette table, PAS directement dans miscdevice.
 
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/miscdevice.h>
+#include <linux/fs.h>
 #include <linux/uaccess.h>
-#include <linux/version.h>
-
-#if KERNEL_VERSION(6, 11, 0) <= LINUX_VERSION_CODE
-#error "API miscdevice refondue (6.11+/7.x, fops) : ce module cible les kernels 6.x LTS, adapter stn_read aux callbacks params/fops"
-#endif
 
 #define STN_SAMPLE "25000\n"
 #define STN_SAMPLE_LEN 6
 
 // Lecture : recopie l'échantillon simulé dans le buffer utilisateur.
-static ssize_t stn_read(struct miscdevice *misc, char __user *buf, size_t count)
+// Signature de l'API file_operations : (struct file *, char __user *, size_t, loff_t *).
+static ssize_t stn_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
 	ssize_t n = count < STN_SAMPLE_LEN ? (ssize_t)count : (ssize_t)STN_SAMPLE_LEN;
 	if (copy_to_user(buf, STN_SAMPLE, n))
 		return -EFAULT;
+	if (pos)
+		*pos += n;
 	return n;
 }
 
-// Le périphérique expose une seule opération (lecture). Aucune écriture,
-// aucun ioctl : surface d'attaque minimale (cohérent avec le démon Rust).
+// Table des opérations du périphérique : une seule opération (lecture).
+// Aucune écriture, aucun ioctl : surface d'attaque minimale (cohérent avec le
+// démon Rust). Le champ owner est requis par l'API récente (6.x/7.x).
+static const struct file_operations stn_fops = {
+	.owner = THIS_MODULE,
+	.read = stn_read,
+};
+
+// Le périphérique misc référence la table d'opérations via fops.
 static struct miscdevice stn_misc = {
 	.name = "stn-sensor",
 	.minor = MISC_DYNAMIC_MINOR,
-	.read = stn_read,
+	.fops = &stn_fops,
 };
 
 static int __init stn_init(void)

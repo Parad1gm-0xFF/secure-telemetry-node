@@ -29,16 +29,10 @@ use std::time::{Duration, Instant};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-// Déclaration FFI manuelle (Linux), sans crate libc.
-// prctl pour la sandbox ; fork/waitpid/openat/_exit pour la SONDE de détection
-// de l'offset des arguments seccomp (voir probe_args_offset).
+// Déclaration FFI manuelle de prctl(2) (Linux), sans crate libc.
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
     fn prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i32;
-    fn fork() -> i32;
-    fn waitpid(pid: i32, status: *const i32, options: i32) -> i32;
-    fn openat(dirfd: i32, path: *const u8, flags: i32, mode: u32) -> i32;
-    fn _exit(code: i32) -> !;
 }
 
 // Options prctl / modes seccomp.
@@ -46,32 +40,13 @@ const PR_SET_NO_NEW_PRIVS: i32 = 38;
 const PR_SET_SECCOMP: i32 = 22;
 const SECCOMP_MODE_FILTER: u64 = 2;
 
-// Instructions BPF pour seccomp. Attention : le kernel 7.0+ a ré-encodé deux
-// champs (migration du jeu d'instructions cBPF) :
-//   ancien encodage (kernels <= 6.x, ex. Yocto LTS) : LD W ABS = 0x10, ALU AND K = 0x44
-//   nouvel encodage (kernels 7.0+, ex. dev récent)  : LD W ABS = 0x20, ALU AND K = 0x54
-// Les classes JMP (0x05) et RET (0x06) restent identiques. Pour rester
-// portable (du poste de dev à la cible embarquée), le démon TENTE d'abord le
-// nouvel encodage puis retombe sur l'ancien si prctl refuse (EINVAL).
-// Les tests unitaires valident la structure avec l'encodage courant.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct BpfEncoding {
-    ld_w_abs: u16,
-    alu_and_k: u16,
-}
-
-fn new_encoding() -> BpfEncoding {
-    BpfEncoding { ld_w_abs: 0x20, alu_and_k: 0x54 }
-}
-
-fn legacy_encoding() -> BpfEncoding {
-    BpfEncoding { ld_w_abs: 0x10, alu_and_k: 0x44 }
-}
-
-// Autres constantes BPF (stables) : classes et opérateurs.
-const BPF_JMP_JEQ_K: u16 = 0x15;
-const BPF_RET_K: u16 = 0x06;
+// Instructions BPF du jeu CLASSIQUE (cBPF), dont l'encodage est inchangé
+// depuis l'origine (voir include/linux/filter.h et la doc kernel "Linux Socket
+// Filtering"). Seccomp impose des mots de 32 bits (BPF_W).
+const BPF_LD_W_ABS: u16 = 0x20;   // BPF_LD | BPF_W | BPF_ABS : charge un mot du buffer seccomp
+const BPF_ALU_AND_K: u16 = 0x54;  // BPF_ALU | BPF_AND | BPF_K : accumulateur &= k
+const BPF_JMP_JEQ_K: u16 = 0x15;  // BPF_JMP | BPF_JEQ | BPF_K : saute si accumulateur == k
+const BPF_RET_K: u16 = 0x06;      // BPF_RET | BPF_K : retourne la décision
 
 // Retours seccomp (seuls les bits 16..31 sont significatifs).
 const SECCOMP_RET_KILL_THREAD: u32 = 0x00000000;
@@ -79,15 +54,19 @@ const SECCOMP_RET_ALLOW: u32 = 0x7FFF0000;
 const SECCOMP_RET_ERRNO: u32 = 0x00050000;
 const EPERM: u32 = 1;
 
-// Offsets du buffer de données seccomp (voir SECCOMP_DATA_* du noyau).
-// Attention : l'offset des ARGUMENTS varie selon la version du kernel !
-//   kernels <= 6.x : struct seccomp_data = { nr, arch, ip, args[6] } -> args à 16
-//   kernels 7.0+   : deux champs u64 ajoutés avant args (observé sur 7.0)
-//                     -> args à 32
-// Le démon détecte l'offset à l'exécution via un sous-processus sonde
-// (probe_args_offset) plutôt que de le hardcoder.
+// Offsets dans struct seccomp_data (interface publique FIGÉE, voir
+// include/uapi/linux/seccomp.h du noyau) :
+//   offset 0  : nr (int)
+//   offset 4  : arch (u32)
+//   offset 8  : instruction_pointer (u64)
+//   offset 16 : args[0] (u64), puis args[1] (24), args[2] (32), ...
 const SECCOMP_DATA_OFFSET_ARCH: u32 = 4;
 const SECCOMP_DATA_OFFSET_SYSCALL: u32 = 0;
+const SECCOMP_DATA_OFFSET_ARGS: u32 = 16;
+
+// Pour openat(dirfd, path, flags, mode), les flags sont le TROISIÈME argument
+// (args[2]), donc à args + 2 * 8 octets = offset 32.
+const OPENAT_FLAGS_OFFSET: u32 = SECCOMP_DATA_OFFSET_ARGS + 16;
 
 // Flags open(2) : O_WRONLY = 0x1 (lecture seule exigée par le démon).
 const O_WRONLY: u32 = 1;
@@ -268,8 +247,8 @@ const MAX_PROG: usize = 64;
 // ---------------------------------------------------------------------------
 // Émetteurs d'instructions BPF.
 // ---------------------------------------------------------------------------
-fn emit_ld_w_abs(prog: &mut [SockFilter; MAX_PROG], len: &mut usize, enc: BpfEncoding, k: u32) {
-    prog[*len] = SockFilter { code: enc.ld_w_abs, jt: 0, jf: 0, k };
+fn emit_ld_w_abs(prog: &mut [SockFilter; MAX_PROG], len: &mut usize, k: u32) {
+    prog[*len] = SockFilter { code: BPF_LD_W_ABS, jt: 0, jf: 0, k };
     *len += 1;
 }
 
@@ -278,8 +257,8 @@ fn emit_jeq(prog: &mut [SockFilter; MAX_PROG], len: &mut usize, k: u32, jt: u8, 
     *len += 1;
 }
 
-fn emit_alu_and(prog: &mut [SockFilter; MAX_PROG], len: &mut usize, enc: BpfEncoding, k: u32) {
-    prog[*len] = SockFilter { code: enc.alu_and_k, jt: 0, jf: 0, k };
+fn emit_alu_and(prog: &mut [SockFilter; MAX_PROG], len: &mut usize, k: u32) {
+    prog[*len] = SockFilter { code: BPF_ALU_AND_K, jt: 0, jf: 0, k };
     *len += 1;
 }
 
@@ -294,24 +273,26 @@ fn emit_ret(prog: &mut [SockFilter; MAX_PROG], len: &mut usize, k: u32) {
 // Layout (m = nombre de syscalls whitelistés, openat exclu car traité à part) :
 //   [0]   LD W ABS arch               -> A = arch
 //   [1]   JMP JEQ AUDIT_ARCH, jt=1    -> arch OK ? [3] sinon [2]
-//   [2]   RET KILL_THREAD             (mauvaise arch, programme tronqué)
+//   [2]   RET deny                     (mauvaise arch, programme tronqué)
 //   [3]   LD W ABS syscall_nr         -> A = numéro de syscall
 //   [4]   JMP JEQ openat, jt=m+1      -> openat ? [6+m] sinon [5]
 //   [5..] JMP JEQ allowed[i], jt=ALLOW_IDX-(idx+1)   (whitelist simple)
-//   [5+m] RET KILL_THREAD             (syscall ni whitelisté ni openat : refusé)
-//   [6+m] LD W ABS args               -> A = flags de openat
+//   [5+m] RET deny                     (syscall ni whitelisté ni openat : refusé)
+//   [6+m] LD W ABS flags_openat       -> A = args[2] (flags) de openat
 //   [7+m] ALU AND O_WRONLY            -> A = flags & O_WRONLY
 //   [8+m] JMP JEQ 0, jt=1             -> lecture seule ? [10+m] sinon [9+m]
-//   [9+m] RET KILL_THREAD             (openat en écriture interdit)
+//   [9+m] RET deny                     (openat en écriture interdit)
 //   [10+m] RET ALLOW
 // Total : 11 + m instructions.
+//
+// Important : les flags d'openat sont son TROISIÈME argument (args[2]),
+// stocké à SECCOMP_DATA_OFFSET_ARGS + 2 * 8 octets. On n'inspecte pas args[0]
+// (qui est le dirfd), ce serait sans rapport avec la politique "lecture seule".
 // ---------------------------------------------------------------------------
 fn build_seccomp_program(
     prog: &mut [SockFilter; MAX_PROG],
     allowed: &[u32],
     openat_nr: u32,
-    enc: BpfEncoding,
-    args_offset: u32,
     log_only: bool,
 ) -> usize {
     // En mode log_only, un syscall refusé retourne EPERM au lieu de tuer le
@@ -321,10 +302,10 @@ fn build_seccomp_program(
     let m: usize = allowed.len();
     let mut len: usize = 0;
 
-    emit_ld_w_abs(prog, &mut len, enc, SECCOMP_DATA_OFFSET_ARCH);
+    emit_ld_w_abs(prog, &mut len, SECCOMP_DATA_OFFSET_ARCH);
     emit_jeq(prog, &mut len, AUDIT_ARCH, 1u8, 0u8);
     emit_ret(prog, &mut len, deny);
-    emit_ld_w_abs(prog, &mut len, enc, SECCOMP_DATA_OFFSET_SYSCALL);
+    emit_ld_w_abs(prog, &mut len, SECCOMP_DATA_OFFSET_SYSCALL);
 
     // [4] openat aiguillé vers la règle argumentaire (SPECIAL = 6+m).
     emit_jeq(prog, &mut len, openat_nr, (m + 1) as u8, 0u8);
@@ -339,8 +320,8 @@ fn build_seccomp_program(
     emit_ret(prog, &mut len, deny);
 
     // Règle openat : refuser toute écriture (O_WRONLY / O_RDWR).
-    emit_ld_w_abs(prog, &mut len, enc, args_offset);
-    emit_alu_and(prog, &mut len, enc, O_WRONLY);
+    emit_ld_w_abs(prog, &mut len, OPENAT_FLAGS_OFFSET);
+    emit_alu_and(prog, &mut len, O_WRONLY);
     emit_jeq(prog, &mut len, 0u32, 1u8, 0u8);
     emit_ret(prog, &mut len, deny);
     emit_ret(prog, &mut len, SECCOMP_RET_ALLOW);
@@ -349,89 +330,10 @@ fn build_seccomp_program(
 }
 
 // ---------------------------------------------------------------------------
-// Sonde de détection de l'offset des arguments seccomp.
-//
-// Le kernel 7.0+ a déplacé args[0] à l'offset 32 (kernels <= 6.x : 16).
-// Pour rester portable, on teste chaque offset dans un sous-processus : le
-// fils installe un filtre minimal qui TUE si openat est ouvert en écriture à
-// l'offset donné, puis tente réellement ce openat. S'il meurt par signal
-// (SIGSYS), l'offset bloque bien les écritures : il est valide. S'il survit,
-// l'offset est faux. Le parent choisit le premier offset valide, avec repli
-// sur 16 (historique) si aucune sonde ne conclut (ex. seccomp indisponible).
+// Installe le filtre seccomp. Retourne le nombre d'instructions.
 // ---------------------------------------------------------------------------
-fn build_probe_program(prog: &mut [SockFilter; MAX_PROG], args_offset: u32) -> usize {
-    let mut len: usize = 0;
-    emit_ld_w_abs(prog, &mut len, new_encoding(), SECCOMP_DATA_OFFSET_SYSCALL);
-    emit_jeq(prog, &mut len, OPENAT_NR, 1u8, 0u8);
-    emit_ret(prog, &mut len, SECCOMP_RET_ALLOW);
-    emit_ld_w_abs(prog, &mut len, new_encoding(), args_offset);
-    emit_alu_and(prog, &mut len, new_encoding(), O_WRONLY);
-    emit_jeq(prog, &mut len, 0u32, 1u8, 0u8);
-    emit_ret(prog, &mut len, SECCOMP_RET_KILL_THREAD);
-    emit_ret(prog, &mut len, SECCOMP_RET_ALLOW);
-    len
-}
-
-// Corps du sous-processus sonde. Après fork, aucune allocation : uniquement
-// prctl, openat et _exit en FFI directe (l'état du runtime est partagé avec
-// le parent, on n'y touche pas).
-fn probe_child(args_offset: u32) -> ! {
-    let mut prog: [SockFilter; MAX_PROG] = [SockFilter { code: 0, jt: 0, jf: 0, k: 0 }; MAX_PROG];
-    let len = build_probe_program(&mut prog, args_offset);
-    let fprog = SockFprog {
-        len: len as u16,
-        filter: std::ptr::from_ref(&prog[0]) as u64,
-    };
-    let _ = unsafe { prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
-    let _ = unsafe {
-        prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, std::ptr::from_ref(&fprog) as u64, 0, 0)
-    };
-    // openat(O_WRONLY|O_CREAT) : si l'offset est valide, ce syscall est tué
-    // par SIGSYS avant tout effet de bord. Sinon, on sort avec le code 42
-    // (distinct de 0) pour que le parent sache que le fils a survécu.
-    let path = b"/tmp/stn-probe.tmp";
-    let _ = unsafe { openat(-100, std::ptr::from_ref(&path[0]), 0x41, 0o600) };
-    unsafe { _exit(42) }
-}
-
-fn probe_args_offset(verbose: bool) -> u32 {
-    let candidates: [u32; 4] = [16, 32, 48, 64];
-    for off in candidates.iter() {
-        let pid = unsafe { fork() };
-        if pid < 0 {
-            continue; // fork indisponible : repli sur le défaut historique.
-        }
-        if pid == 0 {
-            probe_child(*off);
-        }
-        let status = 0i32;
-        let _ = unsafe { waitpid(pid, std::ptr::from_ref(&status), 0) };
-        let signal = status & 0x7f;
-        let exit_code = (status >> 8) & 0xff;
-        if verbose {
-            println!("probe: args@{} -> signal={} exit={}", *off, signal, exit_code);
-        }
-        // Offset valide UNIQUEMENT si le fils est mort par SIGSYS (le syscall
-        // a été refusé par le filtre). Tout autre signal est un faux positif.
-        if signal == 31 {
-            return *off;
-        }
-    }
-    // Repli : offset historique des kernels <= 6.x.
-    16
-}
-
-// ---------------------------------------------------------------------------
-// Installe un filtre avec un encodage et un offset d'arguments donnés.
-// Retourne le nombre d'instructions.
-// ---------------------------------------------------------------------------
-fn install_filter(
-    prog: &mut [SockFilter; MAX_PROG],
-    enc: BpfEncoding,
-    args_offset: u32,
-    log_only: bool,
-) -> Result<usize, String> {
-    let len = build_seccomp_program(prog, &ALLOWED_SYSCALLS, OPENAT_NR, enc, args_offset, log_only);
+fn install_filter(prog: &mut [SockFilter; MAX_PROG], log_only: bool) -> Result<usize, String> {
+    let len = build_seccomp_program(prog, &ALLOWED_SYSCALLS, OPENAT_NR, log_only);
     let fprog = SockFprog {
         len: len as u16,
         filter: std::ptr::from_ref(&prog[0]) as u64,
@@ -446,29 +348,21 @@ fn install_filter(
 }
 
 // ---------------------------------------------------------------------------
-// Sandbox : no-new-privs puis seccomp mode FILTER. Détecte l'offset des args,
-// tente d'abord l'encodage récent (kernel 7.0+) puis l'ancien (<= 6.x).
-// Retourne une description du format actif (logging / tests).
+// Sandbox : no-new-privs puis seccomp mode FILTER. Retourne une description
+// du filtre actif (logging / tests).
 // ---------------------------------------------------------------------------
-fn enable_sandbox(prog: &mut [SockFilter; MAX_PROG], verbose: bool, log_only: bool) -> Result<String, String> {
+fn enable_sandbox(prog: &mut [SockFilter; MAX_PROG], log_only: bool) -> Result<String, String> {
     let r = unsafe { prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
     if r != 0 {
         return Err("PR_SET_NO_NEW_PRIVS failed".into());
     }
-    let args_offset = probe_args_offset(verbose);
-    match install_filter(prog, new_encoding(), args_offset, log_only) {
+    match install_filter(prog, log_only) {
         Ok(n) => {
             let mode = if log_only { "log-only" } else { "actif" };
-            return Ok(format!("BPF 0x20/0x54 (kernel 7.0+), args@{args_offset}, {n} instructions, {mode}"));
-        }
-        Err(_) => {}
-    }
-    // Le noyau a rejeté l'encodage récent : probablement un kernel <= 6.x
-    // (ex. Yocto LTS). On retente avec l'encodage historique.
-    match install_filter(prog, legacy_encoding(), args_offset, log_only) {
-        Ok(n) => {
-            let mode = if log_only { "log-only" } else { "actif" };
-            return Ok(format!("BPF 0x10/0x44 (kernel <= 6.x), args@{args_offset}, {n} instructions, {mode}"));
+            return Ok(format!(
+                "filtre seccomp BPF {mode} ({n} instructions, whitelist {} syscalls + openat lecture seule)",
+                ALLOWED_SYSCALLS.len()
+            ));
         }
         Err(e) => return Err(e),
     }
@@ -477,11 +371,11 @@ fn enable_sandbox(prog: &mut [SockFilter; MAX_PROG], verbose: bool, log_only: bo
 // ---------------------------------------------------------------------------
 // Auto-test du sandbox : installe le filtre puis tente une écriture fichier.
 // Si seccomp est réellement actif, openat(O_WRONLY) est rejeté et le process
-// est tué par SIGSYS (code de sortie 132 côté shell). Si on survit, la
+// est tué par SIGSYS (code de sortie 132/159 côté shell). Si on survit, la
 // politique est inopérante : on remonte une erreur. La CI vérifie le signal.
 // ---------------------------------------------------------------------------
-fn sandbox_self_test(prog: &mut [SockFilter; MAX_PROG], verbose: bool) -> Result<(), String> {
-    match enable_sandbox(prog, verbose, false) {
+fn sandbox_self_test(prog: &mut [SockFilter; MAX_PROG]) -> Result<(), String> {
+    match enable_sandbox(prog, false) {
         Err(e) => return Err(e),
         Ok(_) => {}
     }
@@ -496,7 +390,6 @@ struct Config {
     port: u16,
     addr: String,
     sandbox_self_test: bool,
-    probe_verbose: bool,
     no_sandbox: bool,
     sandbox_log: bool,
 }
@@ -506,7 +399,6 @@ fn parse_args(args: Vec<String>) -> Config {
         port: 5555,
         addr: "127.0.0.1".to_string(),
         sandbox_self_test: false,
-        probe_verbose: false,
         no_sandbox: false,
         sandbox_log: false,
     };
@@ -517,8 +409,6 @@ fn parse_args(args: Vec<String>) -> Config {
             cfg.addr = a.to_string();
         } else if a == "--sandbox-self-test" {
             cfg.sandbox_self_test = true;
-        } else if a == "--probe-verbose" {
-            cfg.probe_verbose = true;
         } else if a == "--no-sandbox" {
             cfg.no_sandbox = true;
         } else if a == "--sandbox-log" {
@@ -614,7 +504,7 @@ fn main() {
     println!("secure-telemetry-node v{} (rust)", VERSION);
 
     if cfg.sandbox_self_test {
-        match sandbox_self_test(&mut prog, cfg.probe_verbose) {
+        match sandbox_self_test(&mut prog) {
             Err(e) => {
                 eprintln!("sandbox self-test: {e}");
                 exit(1);
@@ -643,12 +533,12 @@ fn main() {
         println!("sandbox: désactivé (--no-sandbox, mode debug)");
     } else {
         println!("sandbox: no-new-privs + seccomp filter (BPF)…");
-        match enable_sandbox(&mut prog, cfg.probe_verbose, cfg.sandbox_log) {
+        match enable_sandbox(&mut prog, cfg.sandbox_log) {
             Err(e) => {
                 eprintln!("sandbox désactivé : {e} (démo dégradée, sans seccomp).");
             }
             Ok(n) => {
-                println!("sandbox: seccomp filter actif ✓ ({n}, whitelist {} syscalls + openat lecture seule)", ALLOWED_SYSCALLS.len());
+                println!("sandbox: seccomp filter actif ✓ ({n})");
             }
         }
     }
@@ -757,15 +647,14 @@ fn test_build_seccomp_program_layout() {
     let mut prog: [SockFilter; MAX_PROG] = [SockFilter { code: 0, jt: 0, jf: 0, k: 0 }; MAX_PROG];
     let allowed: [u32; 2] = [1, 2]; // placeholders pour vérifier la structure
     let m = allowed.len();
-    let enc = new_encoding();
-    let len = build_seccomp_program(&mut prog, &allowed, 999, enc, 16, false);
+    let len = build_seccomp_program(&mut prog, &allowed, 999, false);
 
     // 11 + m instructions attendues.
     if len != 11 + m {
         panic!("longueur BPF inattendue : {len}");
     }
     // [0] charge l'arch.
-    if prog[0].code != enc.ld_w_abs || prog[0].k != SECCOMP_DATA_OFFSET_ARCH {
+    if prog[0].code != BPF_LD_W_ABS || prog[0].k != SECCOMP_DATA_OFFSET_ARCH {
         panic!("[0] doit charger l'arch");
     }
     // [1] vérifie l'arch, saute vers [3] si OK.
@@ -777,7 +666,7 @@ fn test_build_seccomp_program_layout() {
         panic!("[2] doit tuer sur mauvaise arch");
     }
     // [3] charge le syscall.
-    if prog[3].code != enc.ld_w_abs || prog[3].k != SECCOMP_DATA_OFFSET_SYSCALL {
+    if prog[3].code != BPF_LD_W_ABS || prog[3].k != SECCOMP_DATA_OFFSET_SYSCALL {
         panic!("[3] doit charger le numéro de syscall");
     }
     // [4] aiguille openat vers la règle argumentaire (SPECIAL = 6+m) : jt = m+1.
@@ -797,12 +686,15 @@ fn test_build_seccomp_program_layout() {
     if prog[kill_idx].code != BPF_RET_K || prog[kill_idx].k != SECCOMP_RET_KILL_THREAD {
         panic!("[5+m] doit tuer les syscalls inconnus");
     }
-    // Règle openat : LD args, AND O_WRONLY, puis JEQ 0 (jt=1 -> ALLOW).
+    // Règle openat : LD args[2] (flags, offset 32), AND O_WRONLY, JEQ 0 (jt=1 -> ALLOW).
     let ld_idx = 6 + m;
-    if prog[ld_idx].code != enc.ld_w_abs || prog[ld_idx].k != 16 {
-        panic!("règle openat : doit charger les flags");
+    if prog[ld_idx].code != BPF_LD_W_ABS || prog[ld_idx].k != OPENAT_FLAGS_OFFSET {
+        panic!("règle openat : doit charger les flags (args[2], offset {OPENAT_FLAGS_OFFSET})");
     }
-    if prog[ld_idx + 1].code != enc.alu_and_k || prog[ld_idx + 1].k != O_WRONLY {
+    if OPENAT_FLAGS_OFFSET != SECCOMP_DATA_OFFSET_ARGS + 16 {
+        panic!("les flags d'openat doivent être à args + 2*8 (cohérence de l'offset)");
+    }
+    if prog[ld_idx + 1].code != BPF_ALU_AND_K || prog[ld_idx + 1].k != O_WRONLY {
         panic!("règle openat : doit faire AND O_WRONLY");
     }
     if prog[ld_idx + 2].code != BPF_JMP_JEQ_K || prog[ld_idx + 2].k != 0 || prog[ld_idx + 2].jt != 1 {
@@ -826,50 +718,30 @@ fn test_build_seccomp_program_whitelist_contains_required() {
             panic!("openat ne doit pas être dans la whitelist simple");
         }
     }
-    // Les syscalls vitaux doivent être présents : write (stdout), nanosleep
-    // (boucle), clock_gettime (Instant::now). Le test construit le programme
-    // complet pour valider les bornes (aucun panic sur les index), pour les
-    // DEUX encodages (kernel récent et ancien).
+    // Le programme complet tient dans le buffer fixe (aucun panic sur les index).
     let mut prog: [SockFilter; MAX_PROG] = [SockFilter { code: 0, jt: 0, jf: 0, k: 0 }; MAX_PROG];
-    let len_new = build_seccomp_program(&mut prog, &ALLOWED_SYSCALLS, OPENAT_NR, new_encoding(), 16, false);
-    let len_legacy = build_seccomp_program(&mut prog, &ALLOWED_SYSCALLS, OPENAT_NR, legacy_encoding(), 16, false);
-    if len_new > MAX_PROG || len_legacy > MAX_PROG {
+    let len = build_seccomp_program(&mut prog, &ALLOWED_SYSCALLS, OPENAT_NR, false);
+    if len > MAX_PROG {
         panic!("programme BPF trop long pour le buffer fixe");
-    }
-    if len_new != len_legacy {
-        panic!("les deux encodages doivent produire le même programme");
     }
 }
 
 #[test]
-fn test_build_probe_program_layout() {
-    // Le programme sonde est court et structuré : LD syscall, JEQ openat,
-    // ALLOW (autre), LD args, AND O_WRONLY, JEQ 0, KILL, ALLOW.
-    let mut prog: [SockFilter; MAX_PROG] = [SockFilter { code: 0, jt: 0, jf: 0, k: 0 }; MAX_PROG];
-    let len = build_probe_program(&mut prog, 32);
-    if len != 8 {
-        panic!("longueur sonde inattendue : {len}");
+fn test_seccomp_data_offsets_are_consistent() {
+    // Vérifie que les offsets de la structure seccomp_data correspondent à la
+    // définition publique du noyau (struct seccomp_data) :
+    //   nr(0) arch(4) instruction_pointer(8) args[0](16) args[1](24) args[2](32)
+    if SECCOMP_DATA_OFFSET_ARCH != 4 {
+        panic!("arch doit être à 4");
     }
-    let enc = new_encoding();
-    if prog[0].code != enc.ld_w_abs || prog[0].k != SECCOMP_DATA_OFFSET_SYSCALL {
-        panic!("[0] doit charger le syscall");
+    if SECCOMP_DATA_OFFSET_SYSCALL != 0 {
+        panic!("nr doit être à 0");
     }
-    if prog[1].code != BPF_JMP_JEQ_K || prog[1].k != OPENAT_NR || prog[1].jt != 1 {
-        panic!("[1] doit aiguiller openat");
+    if SECCOMP_DATA_OFFSET_ARGS != 16 {
+        panic!("args[0] doit être à 16 (structure publique figée)");
     }
-    if prog[3].code != enc.ld_w_abs || prog[3].k != 32 {
-        panic!("[3] doit charger args à l'offset donné");
-    }
-    if prog[4].code != enc.alu_and_k || prog[4].k != O_WRONLY {
-        panic!("[4] doit faire AND O_WRONLY");
-    }
-    if prog[5].code != BPF_JMP_JEQ_K || prog[5].k != 0 || prog[5].jt != 1 {
-        panic!("[5] doit tester l'absence d'écriture avec jt=1");
-    }
-    if prog[6].k != SECCOMP_RET_KILL_THREAD {
-        panic!("[6] doit tuer l'écriture");
-    }
-    if prog[7].k != SECCOMP_RET_ALLOW {
-        panic!("[7] doit autoriser la lecture");
+    // Les flags d'openat (args[2]) doivent être à 16 + 2*8 = 32.
+    if OPENAT_FLAGS_OFFSET != 32 {
+        panic!("flags openat (args[2]) doit être à 32, trouvé {OPENAT_FLAGS_OFFSET}");
     }
 }

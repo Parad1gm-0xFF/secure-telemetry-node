@@ -12,13 +12,13 @@ license = "Apache-2.0"
 name = "secure-telemetry-node"
 path = "src/main.rs"
 
-# NOTE sur opt-level : la valeur "s" (taille) casse la SONDE de détection
-# seccomp (les fonctions probe_child/probe_args_offset passent par fork ; une
-# optimisation de taille trop agressive produit un code erroné post-fork).
-# opt-level = 2/3 est nécessaire au bon fonctionnement du fork. Le binaire
-# reste très compact (std seul, aucune dépendance).
+# NOTE sur opt-level : la valeur "s" (taille) est utilisée car le binaire est
+# destiné à l'embarqué. Une précédente version passait par un sous-processus
+# fork (supprimé) qui était optimisé de façon erronée en "s" ; sans fork, "s"
+# fonctionne correctement. Le binaire reste très compact (std seul, aucune
+# dépendance externe).
 [profile.release]
-opt-level = 2
+opt-level = "s"
 lto = true
 codegen-units = 1
 strip = true

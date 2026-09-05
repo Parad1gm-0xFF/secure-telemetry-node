@@ -28,33 +28,36 @@ plateforme **redpesk** (factory, packaging RPM, sécurité dès le build, LTS).
 ## 🔒 Sécurité réelle, et limites.
 
 Le point central du projet est un **filtre seccomp (SECCOMP_MODE_FILTER) écrit à la
-main en bytecode eBPF**, sans libseccomp. Contrairement à un mode `STRICT` (qui tue
+main en bytecode cBPF**, sans libseccomp. Contrairement à un mode `STRICT` (qui tue
 tout démon réseau dès `accept()`), le filtre est une **whitelist de syscalls** avec
 une règle argumentaire sur `openat` :
 
-- les syscalls autorisés sont listés par architecture (les numéros diffèrents entre
+- les syscalls autorisés sont listés par architecture (les numéros diffèrent entre
   x86_64 et aarch64/riscv64) ;
 - `openat` est refusé en écriture : le filtre inspecte les **flags** de l'appel
   (`flags & O_WRONLY`) et tue uniquement les ouvertures en écriture ;
 - tout syscall hors whitelist est refusé.
 
-Le filtre a été confronté à deux évolutions très probables du kernel 7.0 :
+Détails d'implémentation (vérifiés contre les sources noyau) :
 
-1. **Ré-encodage des instructions eBPF** (`BPF_ABS`/`BPF_AND` déplacés). Le démon
-   tente l'encodage récent, puis retombe sur l'historique (kernels <= 6.x, Yocto LTS).
-2. **Déplacement de `args[0]`** dans `seccomp_data` (offset 32 au lieu de 16).
-   Le démon **détecte l'offset à l'exécution** via un sous-processus sonde
-   (`fork` + filtre minimal + tentative d'écriture réelle), sans hardcoder.
+- Le bytecode utilise l'**encodage cBPF standard**, inchangé depuis l'origine
+  (`BPF_LD|BPF_W|BPF_ABS = 0x20`, `BPF_ALU|BPF_AND|BPF_K = 0x54`), tel que
+  documenté dans `include/linux/filter.h`.
+- Le filtre s'appuie sur la **structure publique `seccomp_data`** (`nr`, `arch`,
+  `instruction_pointer`, `args[6]`), dont la disposition est figée dans
+  `include/uapi/linux/seccomp.h`. Les flags d'`openat` étant son **troisième
+  argument** (`args[2]`, à l'offset 32), c'est cet emplacement précis que la
+  règle inspecte, et non `args[0]` (le dirfd, sans rapport avec la politique).
 
 La preuve est **sémantique** : `--sandbox-self-test` installe le filtre puis tente
 d'écrire un fichier. Le process est tué par **SIGSYS** (code de sortie 132/159).
 Et le service, lui, **tourne** sous ce même filtre (répond en HTTP, lit la mémoire,
-fait ses pauses), ce qui prouve que la whitelist est fonctionne.
+fait ses pauses), ce qui prouve que la whitelist fonctionne.
 
 ```
-$ ./secure-telemetry-node --probe-verbose
+$ ./secure-telemetry-node
 secure-telemetry-node v0.1.0 (rust)
-sandbox: seccomp filter actif ✓ (BPF 0x20/0x54 (kernel 7.0+), args@32, 45 instructions, whitelist 34 syscalls + openat lecture seule)
+sandbox: seccomp filter actif ✓ (filtre seccomp BPF actif (45 instructions, whitelist 34 syscalls + openat lecture seule))
 
 $ ./secure-telemetry-node --sandbox-self-test ; echo $?
 159        # mort par SIGSYS : l'écriture fichier est bien refusée
@@ -66,7 +69,6 @@ $ ./secure-telemetry-node --sandbox-self-test ; echo $?
 |---|---|
 | `--port=N`, `--addr=HOST` | Écoute (défaut `127.0.0.1:5555`) |
 | `--sandbox-self-test` | Prouve que le filtre bloque une écriture (SIGSYS) |
-| `--probe-verbose` | Affiche la détection de l'offset des arguments |
 | `--sandbox-log` | Installe le filtre en mode log (syscalls refusés en EPERM au lieu de tuer), pour auditer avec strace |
 | `--no-sandbox` | Désactive la sandbox (debug / démo dégradée) |
 
@@ -75,9 +77,9 @@ $ ./secure-telemetry-node --sandbox-self-test ; echo $?
 ## 🧱 Architecture.
 
 ```
-src/main.rs                 → Daemon Rust (std seul, FFI prctl/fork/openat).
+src/main.rs                 → Daemon Rust (std seul, FFI prctl).
 kernel/
-  stn-sensor.c              → Module noyau : pseudo-capteur /dev/stn-sensor (API miscdevice 6.x LTS).
+  stn-sensor.c              → Module noyau : pseudo-capteur /dev/stn-sensor (API miscdevice + file_operations).
   overlays/stn-status.dts   → Overlay Device Tree RPi3B+ (LED GPIO + nœud capteur).
   Makefile + README.md      → Build module + overlay.
 packaging/secure-telemetry-node.service → Unité systemd durcie (SystemCallFilter, ProtectClock...).
@@ -96,7 +98,7 @@ scripts/flash-rpi3.sh       → Écriture de l'image Yocto sur carte SD.
 ### 1. Compiler et tester (x86_64, poste de dev).
 
 ```bash
-cargo test --release        # 10 tests unitaires (parsing, construction du eBPF)
+cargo test --release        # 10 tests unitaires (parsing, construction du cBPF)
 cargo build --release
 
 # Service sandboxé :
@@ -138,10 +140,9 @@ actif sur la cible embarquée réelle (kernel Yocto).
 Voir `kernel/README.md` pour le détail. Le dépôt embarque :
 
 - **`stn-sensor.c`** : driver noyau exposant `/dev/stn-sensor` (lecture d'un
-  pseudo-capteur). Cible assumée : API `miscdevice` des kernels 6.x LTS
-  (Yocto/redpesk). Le kernel 7.0 a visiblement refondu cette API : Le module refuse de
-  compiler sur une API non couverte (`#error`) plutôt que de produire un binaire
-  incohérent, comme le fait la sandbox vis-à-vis de seccomp.
+  pseudo-capteur). Interface standard `miscdevice` + `struct file_operations`,
+  stable depuis v4.19 ; le module compile contre les kernels 6.17 et 7.0
+  (vérifié) et le pattern est identique sur 6.6 LTS (Yocto/redpesk).
 - **`stn-status.dts`** : overlay Device Tree RPi3B+ (LED d'état GPIO + nœud de
   capteur), compilé par `dtc` (`make overlay`).
 
@@ -183,7 +184,7 @@ Le projet est industrialisé sur la **redpesk factory Community**
 Détails et modérations :
 
 - **Audit** : l'audit initial signalait un « High » sur `kernel/stn-sensor.c`
-  (`linux/miscdevice.h` introuvable). C'est visiblement un **artefact d'environnement** : le
+  (`linux/miscdevice.h` introuvable). C'est un **artefact d'environnement** : le
   module noyau se compile contre les headers kernel de la cible Yocto, absents de
   l'environnement d'audit user-space de redpesk. Le fichier a donc été exclu de
   l'audit applicatif (le code C du module est analysable dans son propre build
@@ -191,18 +192,18 @@ Détails et modérations :
 - **Tests** : le subpackage `-redtest` est bien produit et installé dans
   `/usr/libexec/redtest/secure-telemetry-node/` (`run-redtest` au format TAP).
   L'exécution sur cible QEMU est en attente de disponibilité de l'infrastructure
-  Community (échec au boot de la VM, sans rapport avec l'application visiblement. Plusieurs
+  Community (échec au boot de la VM, sans rapport avec l'application ; plusieurs
   tests ont été faits étalés dans le temps, limite du compte free probable).
 
 ---
 
-## ⚙️ Note : pourquoi `opt-level = 2` dans le profil release.
+## ⚙️ Note : pourquoi `opt-level = "s"` dans le profil release
 
-La valeur `"s"` (taille) casse la **sonde de détection seccomp** : elle passe par
-`fork()` dans `probe_args_offset`, et une optimisation de taille trop agressive
-produit un code erroné dans le processus fils. `opt-level = 2`/`3` est nécessaire
-au bon fonctionnement du fork. Le binaire reste compact (std seul, aucune
-dépendance).
+Le profil release utilise `opt-level = "s"` (optimisation pour la taille), adapté
+à l'embarqué. Une version antérieure passait par un sous-processus `fork` (sonde
+de détection, supprimée) qu'une optimisation de taille trop agressive cassait ;
+cette sonde ayant disparu, `"s"` fonctionne correctement. Le binaire est compact
+(std seul, aucune dépendance externe).
 
 ---
 

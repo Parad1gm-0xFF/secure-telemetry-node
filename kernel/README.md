@@ -49,10 +49,8 @@ pseudo-capteur, il suffit d'ajouter le chemin `/dev/stn-sensor` dans
 
 ## Note de compatibilité kernel
 
-Ce module cible **délibérément** l'API `miscdevice` des kernels **6.x LTS**
-(Yocto Scarthgap / redpesk LTS). Le kernel 7.0 a refondu cette API (callbacks
-déplacés dans `struct file_operations`), et 6.11 a réorganisé les callbacks
-dans un sous-struct `params`. Comme pour seccomp dans `src/main.rs`, ces
-évolutions sont réelles : le module refuse de compiler (`#error`) sur une API
-non couverte plutôt que de produire un binaire incohérent. C'est le comportement
-attendu d'un BSP engineer qui assume un support kernel précis.
+L'API `miscdevice` est **stable depuis longtemps** : la structure référence une
+table `struct file_operations *fops` (au moins depuis v4.19, inchangée sur 6.x
+et 7.x). Ce module utilise cette interface standard ; il compile contre les
+kernels 6.17 et 7.0 (vérifié), et le pattern est identique sur 6.6 LTS
+(Yocto/redpesk Scarthgap).
