@@ -38,7 +38,7 @@ une règle argumentaire sur `openat` :
   (`flags & O_WRONLY`) et tue uniquement les ouvertures en écriture ;
 - tout syscall hors whitelist est refusé.
 
-Le filtre a été confronté à deux évolutions réelles du kernel 7.0 :
+Le filtre a été confronté à deux évolutions très probables du kernel 7.0 :
 
 1. **Ré-encodage des instructions eBPF** (`BPF_ABS`/`BPF_AND` déplacés). Le démon
    tente l'encodage récent, puis retombe sur l'historique (kernels <= 6.x, Yocto LTS).
