@@ -36,7 +36,9 @@ fi
 echo "=========================================================="
 echo " 2/5 Smoke HTTP sous seccomp"
 echo "=========================================================="
-pkill -x secure-telemetry-node 2>/dev/null || true
+# NB : le nom de process est tronqué à 15 chars ("secure-telemetr"), donc
+# pkill -x ne matche pas. On utilise pkill -f (ligne de commande complète).
+pkill -f "secure-telemetry-node" 2>/dev/null || true
 sleep 0.3
 "$BIN" --port=$PORT > /tmp/stn-smoke.log 2>&1 &
 DPID=$!
