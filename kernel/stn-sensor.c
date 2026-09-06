@@ -25,13 +25,20 @@
 
 // Lecture : recopie l'échantillon simulé dans le buffer utilisateur.
 // Signature de l'API file_operations : (struct file *, char __user *, size_t, loff_t *).
+// Respect de *pos et renvoi de 0 en fin de fichier : sans EOF, un lecteur
+// comme cat(1) boucle à l'infini (bug constaté en test réel sur RPi3B+).
 static ssize_t stn_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
-	ssize_t n = count < STN_SAMPLE_LEN ? (ssize_t)count : (ssize_t)STN_SAMPLE_LEN;
-	if (copy_to_user(buf, STN_SAMPLE, n))
+	ssize_t n;
+
+	if (*pos >= STN_SAMPLE_LEN)
+		return 0;			/* EOF */
+	n = STN_SAMPLE_LEN - (ssize_t)*pos;
+	if (n > (ssize_t)count)
+		n = (ssize_t)count;
+	if (copy_to_user(buf, STN_SAMPLE + *pos, n))
 		return -EFAULT;
-	if (pos)
-		*pos += n;
+	*pos += n;
 	return n;
 }
 
@@ -44,9 +51,12 @@ static const struct file_operations stn_fops = {
 };
 
 // Le périphérique misc référence la table d'opérations via fops.
+// .mode = 0644 : le daemon tourne sous l'utilisateur non privilégié
+// `telemetry` et doit pouvoir lire le capteur.
 static struct miscdevice stn_misc = {
 	.name = "stn-sensor",
 	.minor = MISC_DYNAMIC_MINOR,
+	.mode = 0644,
 	.fops = &stn_fops,
 };
 
