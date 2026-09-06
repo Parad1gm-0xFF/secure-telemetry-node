@@ -136,8 +136,10 @@ const ALLOWED_SYSCALLS: [u32; 34] = [
 // (openat exclu, traité à part). Numéros vérifiés contre la table syscall
 // ARM64/RISC-V (les numéros réseau diffèrent de x86_64 : accept4=242,
 // sendmsg=211, shutdown=210, getsockname=204, mremap=216).
+// fstat=80 : requis par musl/ARM64 pour stat() (sur x86_64, glibc passe par
+// newfstatat/statx ; validé sur cible réelle RPi3B+, kernel 6.18 ARM64).
 #[cfg(target_arch = "aarch64")]
-const ALLOWED_SYSCALLS: [u32; 38] = [
+const ALLOWED_SYSCALLS: [u32; 39] = [
     25,   // fcntl
     29,   // ioctl
     57,   // close
@@ -146,6 +148,7 @@ const ALLOWED_SYSCALLS: [u32; 38] = [
     73,   // ppoll
     78,   // readlinkat
     79,   // newfstatat
+    80,   // fstat (musl/ARM64 : utilisé par std::fs::read_to_string)
     93,   // exit
     94,   // exit_group
     98,   // futex
@@ -179,7 +182,7 @@ const ALLOWED_SYSCALLS: [u32; 38] = [
 ];
 
 #[cfg(target_arch = "riscv64")]
-const ALLOWED_SYSCALLS: [u32; 38] = [
+const ALLOWED_SYSCALLS: [u32; 39] = [
     25,   // fcntl
     29,   // ioctl
     57,   // close
@@ -188,6 +191,7 @@ const ALLOWED_SYSCALLS: [u32; 38] = [
     73,   // ppoll
     78,   // readlinkat
     79,   // newfstatat
+    80,   // fstat (même table générique que ARM64)
     93,   // exit
     94,   // exit_group
     98,   // futex

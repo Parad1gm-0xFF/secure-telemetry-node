@@ -1,38 +1,31 @@
 #!/bin/bash
 # run-redtest - tests d'intégration redpesk pour secure-telemetry-node.
 #
-# Exécuté par la plateforme redpesk sur la cible (VM QEMU x86_64) APRÈS
-# installation du package principal et du package -redtest. Le script vérifie
-# que le daemon :
-#   1. démarre et installe son sandbox seccomp (no-new-privs + filtre BPF) ;
-#   2. répond en HTTP avec un heartbeat valide.
+# Exécuté par la plateforme redpesk sur cible (QEMU) ou manuellement sur une
+# carte réelle. Vérifie, sur le daemon EN FONCTIONNEMENT :
+#   1. que le daemon est actif ;
+#   2. que son sandbox seccomp est en mode FILTER — lu dans /proc/<pid>/status
+#      (état du kernel, indépendant des logs) ;
+#   3. qu'il répond en HTTP avec un heartbeat valide ;
+#   4. qu'une écriture fichier est refusée (self-test SIGSYS).
 #
-# Sortie : standard TAP (Test Anything Protocol), redirigée vers un fichier
-# .tap dans /var/log/redtest/<package>/ comme exigé par redpesk (et affichée
-# sur stdout pour la console live de la plateforme).
-#
-# Note : le filtre seccomp du daemon limite l'écriture fichier, mais le daemon
-# est un sous-processus distinct ; ce script écrit librement son rapport TAP.
+# Sortie : standard TAP (Test Anything Protocol), écrite à la fois sur stdout
+# (console de la plateforme) et dans /var/log/redtest/<package>/stn.tap.
 
 PACKAGE_NAME="secure-telemetry-node"
+DAEMON_PATH="/usr/local/bin/${PACKAGE_NAME}"
 PORT=5555
 OUT_DIR="/var/log/redtest/${PACKAGE_NAME}"
 TAP_FILE="${OUT_DIR}/stn.tap"
-LOG_FILE="${OUT_DIR}/stn-daemon.log"
-TMP_TAP="/tmp/stn-${$}.tap"
 
 mkdir -p "${OUT_DIR}"
 
-# La sortie TAP est écrite à la fois sur stdout (console redpesk) et dans le
-# fichier .tap attendu.
-exec 3>&1
-exec > >(tee "${TMP_TAP}" >&3)
+# Sortie TAP sur stdout ET dans le fichier .tap attendu par redpesk.
+exec > >(tee "${TAP_FILE}") 2>&1
 
 pass=0
 fail=0
-
 tap() {
-    # tap <resultat: ok|not ok> <num> <description>
     echo "$1 $2 - $3"
     if [ "$1" = "ok" ]; then
         pass=$((pass + 1))
@@ -42,43 +35,63 @@ tap() {
 }
 
 cleanup() {
-    [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
-    # Déplace le rapport TAP vers le répertoire redtest attendu.
-    cp -a "${TMP_TAP}" "${TAP_FILE}" 2>/dev/null || true
+    [ -n "${DPID:-}" ] && [ "$SPAWNED" = "1" ] && kill "$DPID" 2>/dev/null
+    true
 }
-
 trap cleanup EXIT
 
-# --- Démarrage du daemon -----------------------------------------------
-systemctl start secure-telemetry-node 2>/dev/null || true
+# Le service est installé par le package principal ; on le démarre s'il est
+# arrêté (sur redpesk il est démarré automatiquement à l'installation).
+systemctl start "${PACKAGE_NAME}" 2>/dev/null || true
 sleep 1
 
-DAEMON=$(command -v secure-telemetry-node || echo /usr/sbin/secure-telemetry-node)
-if ! pgrep -f "${DAEMON}" >/dev/null 2>&1; then
-    "${DAEMON}" --port=${PORT} > "${LOG_FILE}" 2>&1 &
-    DPID=$!
-    sleep 1
-fi
+# PID du daemon : le nom de process est tronqué à 15 chars (secure-telemetr),
+# on matche donc le chemin complet de l'exécutable.
+DPID=$(pgrep -f "${DAEMON_PATH}" | head -1)
+SPAWNED=0
 
 echo "TAP version 13"
 
-# --- Test 1 : le sandbox seccomp est actif -----------------------------
-if grep -q "seccomp filter actif" "${LOG_FILE}" 2>/dev/null; then
-    tap "ok" 1 "sandbox seccomp actif (filtre BPF + no-new-privs)"
+# --- Test 1 : le daemon est actif --------------------------------------
+if [ -n "$DPID" ]; then
+    tap "ok" 1 "daemon actif (pid $DPID)"
 else
-    tap "not ok" 1 "sandbox seccomp actif (filtre BPF + no-new-privs)"
+    tap "not ok" 1 "daemon actif"
 fi
 
-# --- Test 2 : le daemon répond en HTTP avec un heartbeat ---------------
+# --- Test 2 : seccomp en mode FILTER (état kernel, /proc) ---------------
+# /proc/<pid>/status : "Seccomp: 2" = mode FILTER installé. C'est l'état réel
+# du kernel, pas une trace de log.
+if [ -n "$DPID" ] && grep -q "^Seccomp:.*2$" "/proc/$DPID/status" 2>/dev/null; then
+    tap "ok" 2 "sandbox seccomp en mode FILTER (/proc/$DPID/status)"
+else
+    tap "not ok" 2 "sandbox seccomp en mode FILTER (/proc/$DPID/status)"
+fi
+
+# --- Test 3 : HTTP heartbeat --------------------------------------------
 RESP=$(curl -s --max-time 3 "http://127.0.0.1:${PORT}/" 2>/dev/null)
 if echo "${RESP}" | grep -q "cpu_temp" && echo "${RESP}" | grep -q "free_mem_kb"; then
-    tap "ok" 2 "réponse HTTP du daemon (heartbeat valide)"
+    tap "ok" 3 "réponse HTTP du daemon (heartbeat valide)"
 else
-    tap "not ok" 2 "réponse HTTP du daemon (heartbeat valide)"
+    tap "not ok" 3 "réponse HTTP du daemon (heartbeat valide)"
 fi
 
-# --- Récapitulatif TAP -------------------------------------------------
-echo "1..2"
+# --- Test 4 : une écriture fichier est refusée (self-test SIGSYS) -------
+# Le self-test installe le même filtre dans un process séparé puis tente
+# openat(O_WRONLY) : il doit mourir par SIGSYS (128+31=159, ou 132 sur
+# certains shells). Process séparé : le filtre du daemon n'est pas touché.
+set +e
+"${DAEMON_PATH}" --sandbox-self-test >/dev/null 2>&1
+RC=$?
+set -e
+if [ "$RC" -eq 159 ] || [ "$RC" -eq 132 ]; then
+    tap "ok" 4 "écriture refusée par seccomp (SIGSYS, rc=$RC)"
+else
+    tap "not ok" 4 "écriture refusée par seccomp (rc=$RC inattendu)"
+fi
+
+# --- Récapitulatif TAP ---------------------------------------------------
+echo "1..4"
 echo "# ${pass} passed, ${fail} failed"
 
 [ "${fail}" -eq 0 ]
