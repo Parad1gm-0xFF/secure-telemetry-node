@@ -137,7 +137,6 @@ fi
 exit 0
 %endif
 %ifarch aarch64
-%check
 echo "secure-telemetry-node: %check non exécutable sur builder x86_64 pour un binaire aarch64 — validé sur cible (redtest, RPi3B+)";
 %endif
 
