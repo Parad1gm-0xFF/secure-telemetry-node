@@ -14,7 +14,7 @@ plateforme **redpesk** (factory, packaging RPM, sécurité dès le build, LTS).
 ## 🎯 Ce que le projet tente de prouver.
 
 | Mission / compétence | Preuve dans ce dépôt |
-|---|---|---|
+|---|---|
 | Intégration / optimisation **BSP Yocto** | Couche `meta-secure-node` + recipe (RPi3B+) |
 | Programmation bas-niveau **C/C++/Rust** | Daemon Rust (std seul, FFI direct) + module noyau C + programme eBPF C |
 | **Drivers / BSP** | Module noyau `stn-sensor` + overlay Device Tree `stn-status` |
@@ -213,7 +213,7 @@ Le projet est industrialisé sur la **redpesk factory Community**
 | Build **aarch64** (packaging du binaire cross-compilé `prebuilt/`) | idem, arch aarch64 activée | ✅ `done` (buildArchCross) |
 | `%check` x86_64 (sandbox actif + HTTP) | intégré au build | ✅ `test OK (sandbox actif + réponse HTTP)` + `test seccomp OK (écriture refusée par SIGSYS)` |
 | RPM produits (4) | build log | ✅ app + redtest, **aarch64 et x86_64** |
-| Audit statique clang-tidy | `rp-cli applications audit --exclude stn-sensor.c` | ✅ **0 vulnérabilité** (module noyau non analysable en user-space) |
+| Audit statique clang-tidy | `rp-cli applications audit --exclude stn-sensor.c --exclude supervise_stn.bpf.c` | ✅ **0 vulnérabilité** (module noyau et programme eBPF non analysables en user-space) |
 | Tests embarqués (QEMU) | `rp-cli applications test` | ⏸ bloqués par la plateforme (échec au déploiement de la VM, `boot.log` illisible : erreur serveur `read on closed response body`, 0 test exécuté) |
 | **Validation sur cible réelle** | OS redpesk corn 3.0 flashé sur RPi3B+, `dnf install` du RPM factory | ✅ service actif sous seccomp (`/proc` Seccomp: 2), HTTP, run-redtest **4/4 TAP** |
 
@@ -227,12 +227,15 @@ Détails et modérations :
   via `Source1` additionnel a échoué (la factory remappe les tags Source
   vers ses sources autogénérées) : le binaire dans le dépôt est le
   contournement déterministe.
-- **Audit** : l'audit initial signalait un « High » sur `kernel/stn-sensor.c`
-  (`linux/miscdevice.h` introuvable). C'est un **artefact d'environnement** : le
-  module noyau se compile contre les headers kernel de la cible Yocto, absents de
-  l'environnement d'audit user-space de redpesk. Le fichier a donc été exclu de
-  l'audit applicatif (le code C du module est analysable dans son propre build
-  kernel). Le reste du dépôt est audité sans vulnérabilité.
+- **Audit** : les audits initiaux signalaient des « High » sur
+  `kernel/stn-sensor.c` (`linux/miscdevice.h` introuvable) puis sur
+  `kernel/ebpf/supervise_stn.bpf.c` (`bpf/bpf_helpers.h` introuvable). Ce sont
+  des **artefacts d'environnement** : ces fichiers se compilent contre les
+  headers kernel (module noyau) et libbpf (programme eBPF), absents de
+  l'environnement d'audit user-space de redpesk. Ils sont exclus de l'audit
+  applicatif (chacun est compilé et validé dans son propre contexte : build
+  kernel pour le module, clang -target bpf pour le programme eBPF). Le reste
+  du dépôt est audité sans vulnérabilité.
 - **Tests embarqués** : le subpackage `-redtest` est bien produit et installé dans
   `/usr/libexec/redtest/secure-telemetry-node/` (`run-redtest` au format TAP).
   L'exécution sur cible QEMU est en attente de disponibilité de l'infrastructure
