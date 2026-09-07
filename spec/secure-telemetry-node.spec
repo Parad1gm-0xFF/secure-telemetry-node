@@ -42,6 +42,14 @@ BuildRequires:  rust
 # Cible Rust déduite de l'arch rpm : indispensable pour le CROSS-BUILD.
 # Sur le build aarch64, l'hôte de compilation est x86_64 (émulation) : sans
 # --target, cargo produit un binaire x86_64 → erreur "wrong architecture".
+#
+# ATTENTION aarch64 : le builder community est OFFLINE et le rust-std
+# aarch64-unknown-linux-gnu n'existe pas dans les dépôts RHEL/Alma/EPEL
+# (seuls x86_64/i686/wasm y sont) → cargo échoue avec "can't find crate for
+# std". Pattern industriel retenu : le binaire aarch64 est cross-compilé
+# hors factory (musl statique, voir README) et fourni à la factory comme
+# SOURCE ADDITIONNELLE (Source1, uploadé via rp-cli applications files
+# upload) ; la factory SEULEMENT le package. Sur x86_64, compilation source.
 %global rust_triple x86_64-unknown-linux-gnu
 %ifarch aarch64
 %global rust_triple aarch64-unknown-linux-gnu
@@ -53,18 +61,29 @@ redpesk factory. Fournit un petit microservice TCP (esprit afb-binder) exposant
 temperature CPU, etat GPIO et memoire libre. Securise des le build : sandbox
 seccomp, unite systemd durcie.
 
+# Source1 : binaire aarch64 cross-compilé (uploadé en source additionnelle).
+Source1:        secure-telemetry-node-aarch64
+
 %prep
 %autosetup
 
+%ifarch x86_64
 %build
 # Compilation Rust vers l'arch cible du paquet (cross-build sûr).
 cargo build --release --locked --offline \
     --target %{rust_triple} \
     --manifest-path %{_builddir}/%{name}-%{version}/Cargo.toml
+%endif
 
 %install
+%ifarch x86_64
 install -D -m 0755 %{_builddir}/%{name}-%{version}/target/%{rust_triple}/release/secure-telemetry-node \
     %{buildroot}%{_sbindir}/secure-telemetry-node
+%endif
+%ifarch aarch64
+# Binaire aarch64 cross-compilé (musl statique), fourni en Source1.
+install -D -m 0755 %{SOURCE1} %{buildroot}%{_sbindir}/secure-telemetry-node
+%endif
 install -D -m 0644 %{_builddir}/%{name}-%{version}/packaging/secure-telemetry-node.service \
     %{buildroot}/usr/lib/systemd/system/secure-telemetry-node.service
 
@@ -78,6 +97,9 @@ chmod +x %{buildroot}%{_libexecdir}/redtest/%{name}/run-redtest
 %check
 # Test robuste : le daemon doit démarrer, installer son sandbox seccomp et
 # RÉPONDRE en HTTP (preuve de compilation + exécution + politique active).
+# Conditionnel : le binaire aarch64 ne peut pas s'exécuter sur le builder
+# x86_64 (pas d'émulation) — il est validé sur cible (voir redtest et README).
+%ifarch x86_64
 cd %{_builddir}/%{name}-%{version}
 BIN=./target/%{rust_triple}/release/secure-telemetry-node
 "$BIN" --port=5599 > /tmp/stn-test.log 2>&1 &
@@ -113,6 +135,11 @@ else
     echo "secure-telemetry-node: AVERTISSEMENT — self-test seccomp inattendu (rc=$RC)";
 fi
 exit 0
+%endif
+%ifarch aarch64
+%check
+echo "secure-telemetry-node: %check non exécutable sur builder x86_64 pour un binaire aarch64 — validé sur cible (redtest, RPi3B+)";
+%endif
 
 %files
 %{_sbindir}/secure-telemetry-node
@@ -137,7 +164,10 @@ réponse HTTP. Sortie au format TAP (Test Anything Protocol).
 systemctl daemon-reload || true
 
 %changelog
-* Thu Sep 04 2026 Parad1gm <parad1gm_0xFF@gmail.com> - 0.1.0-1
+* Mon Sep 07 2026 Parad1gm <parad1gm_0xFF@gmail.com> - 0.1.0-1
+- Build aarch64 : binaire cross-compilé fourni en Source1 (builder offline,
+  rust-std aarch64 absent des dépôts RHEL/Alma) ; %build/%check conditionnels.
+* Fri Sep 04 2026 Parad1gm <parad1gm_0xFF@gmail.com> - 0.1.0-1
 - Ajout du subpackage -redtest (tests d'intégration TAP exécutés par redpesk).
 * Wed Sep 02 2026 Parad1gm <parad1gm_0xFF@gmail.com> - 0.1.0-1
 - Variante redpesk factory : compilation a la source via Cargo.
