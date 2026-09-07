@@ -46,10 +46,11 @@ BuildRequires:  rust
 # ATTENTION aarch64 : le builder community est OFFLINE et le rust-std
 # aarch64-unknown-linux-gnu n'existe pas dans les dépôts RHEL/Alma/EPEL
 # (seuls x86_64/i686/wasm y sont) → cargo échoue avec "can't find crate for
-# std". Pattern industriel retenu : le binaire aarch64 est cross-compilé
-# hors factory (musl statique, voir README) et fourni à la factory comme
-# SOURCE ADDITIONNELLE (Source1, uploadé via rp-cli applications files
-# upload) ; la factory SEULEMENT le package. Sur x86_64, compilation source.
+# std". Pattern industriel retenu (cross-compile une fois, packager par
+# arch) : le binaire aarch64 est cross-compilé hors factory (musl statique)
+# et versionné dans le dépôt (prebuilt/secure-telemetry-node-aarch64) ; il
+# arrive donc DANS le tarball Source0 et la factory SEULEMENT le package.
+# Le binaire prebuilt est régénérable : make prebuilt-aarch64 (voir Makefile).
 %global rust_triple x86_64-unknown-linux-gnu
 %ifarch aarch64
 %global rust_triple aarch64-unknown-linux-gnu
@@ -60,9 +61,6 @@ Demon de telemetrie securise pour Linux embarque, compile A LA SOURCE par la
 redpesk factory. Fournit un petit microservice TCP (esprit afb-binder) exposant
 temperature CPU, etat GPIO et memoire libre. Securise des le build : sandbox
 seccomp, unite systemd durcie.
-
-# Source1 : binaire aarch64 cross-compilé (uploadé en source additionnelle).
-Source1:        secure-telemetry-node-aarch64
 
 %prep
 %autosetup
@@ -81,8 +79,10 @@ install -D -m 0755 %{_builddir}/%{name}-%{version}/target/%{rust_triple}/release
     %{buildroot}%{_sbindir}/secure-telemetry-node
 %endif
 %ifarch aarch64
-# Binaire aarch64 cross-compilé (musl statique), fourni en Source1.
-install -D -m 0755 %{SOURCE1} %{buildroot}%{_sbindir}/secure-telemetry-node
+# Binaire aarch64 cross-compilé (musl statique), versionné dans le dépôt
+# (prebuilt/) et donc présent dans le tarball Source0 de la factory.
+install -D -m 0755 %{_builddir}/%{name}-%{version}/prebuilt/secure-telemetry-node-aarch64 \
+    %{buildroot}%{_sbindir}/secure-telemetry-node
 %endif
 install -D -m 0644 %{_builddir}/%{name}-%{version}/packaging/secure-telemetry-node.service \
     %{buildroot}/usr/lib/systemd/system/secure-telemetry-node.service

@@ -1,5 +1,5 @@
 # Métas du dépôt : compilation, tests, exécution QEMU, versant kernel.
-.PHONY: build build-aarch64 build-riscv64 test run-qemu kernel ebpf help
+.PHONY: build build-aarch64 build-riscv64 prebuilt-aarch64 test run-qemu kernel ebpf help
 
 help:
 	@echo "Cibles :"
@@ -7,6 +7,7 @@ help:
 	@echo "  test           Tests unitaires (cargo test, release)"
 	@echo "  build-aarch64  Cross-compile Rust -> aarch64-unknown-linux-musl (RPi3B+)"
 	@echo "  build-riscv64  Cross-compile Rust -> riscv64gc-unknown-linux-musl"
+	@echo "  prebuilt-aarch64  Publie le binaire aarch64 dans prebuilt/ (utilisé par le spec RPi)"
 	@echo "  run-qemu       Execute le binaire ARM sous qemu-aarch64 (sans carte)"
 	@echo "  kernel         Build du module noyau + overlay (voir kernel/)"
 	@echo "  ebpf           Supervision eBPF du daemon (bpftrace, root requis)"
@@ -14,6 +15,10 @@ help:
 
 ebpf:
 	$(MAKE) -C kernel ebpf
+
+prebuilt-aarch64: build-aarch64
+	mkdir -p prebuilt
+	cp target/aarch64-unknown-linux-musl/release/secure-telemetry-node prebuilt/secure-telemetry-node-aarch64
 
 build:
 	docker run --rm -v "$$PWD":/work -w /work rust:latest cargo build --release
