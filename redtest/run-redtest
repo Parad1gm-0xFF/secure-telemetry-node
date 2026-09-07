@@ -13,10 +13,16 @@
 # (console de la plateforme) et dans /var/log/redtest/<package>/stn.tap.
 
 PACKAGE_NAME="secure-telemetry-node"
-DAEMON_PATH="/usr/local/bin/${PACKAGE_NAME}"
 PORT=5555
 OUT_DIR="/var/log/redtest/${PACKAGE_NAME}"
 TAP_FILE="${OUT_DIR}/stn.tap"
+
+# Localisation du daemon : /usr/sbin (paquet RPM, variante redpesk) ou
+# /usr/local/bin (installation manuelle, variante Raspberry Pi OS).
+for p in /usr/sbin/"${PACKAGE_NAME}" /usr/local/bin/"${PACKAGE_NAME}"; do
+    [ -x "$p" ] && DAEMON_PATH="$p" && break
+done
+DAEMON_PATH="${DAEMON_PATH:-/usr/sbin/${PACKAGE_NAME}}"
 
 mkdir -p "${OUT_DIR}"
 
