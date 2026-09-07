@@ -177,9 +177,16 @@ eBPF, en direct, que le sandbox tue les appels interdits.
 
 ## 📦 Packaging RPM (modèle redpesk).
 
-Le specfile compile le code Rust dans la factory et exécute un `%check` qui
-vérifie le **démarrage + réponse HTTP** sous sandbox, puis le **self-test SIGSYS**
-(non bloquant si seccomp est indisponible dans l'environnement de build).
+Deux variantes de spec, selon le contexte :
+
+- **`spec/secure-telemetry-node.spec`** (factory) : sur x86_64, compilation
+  source par cargo + `%check` complet (sandbox + HTTP + SIGSYS) ; sur aarch64,
+  **packaging du binaire cross-compilé** versionné dans `prebuilt/` (le builder
+  community est offline et le rust-std aarch64 n'existe pas dans les dépôts
+  RHEL/Alma — pattern industriel : cross-compiler une fois, packager par arch).
+- **`spec/secure-telemetry-node-rpi.spec`** (cible RPi3B+) : variante locale
+  packaging le binaire statique aarch64 précompilé, sans compilation.
+
 Le spec produit deux paquets : le daemon (`secure-telemetry-node`) et le paquet
 de test (`secure-telemetry-node-redtest`) exécuté par la plateforme.
 
@@ -198,25 +205,35 @@ docker run --rm -v "$PWD/.rpmbuild":/rpmbuild -w /rpmbuild almalinux:9 \
 
 Le projet est industrialisé sur la **redpesk factory Community**
 (`community-app.redpesk.bzh`, compte gratuit), via `rp-cli`. Résultats au
-05/09/2026 (code corrigé, commit `g2d9d6c3`) :
+07/09/2026 (commit `g984deaf`, build 55082) :
 
 | Étape | Commande | Résultat |
 |---|---|---|
-| Build (x86_64, distro corn 3.0) | `rp-cli applications build secure-telemetry-node` | ✅ `done` |
-| `%check` (sandbox actif + HTTP) | intégré au build | ✅ `test OK (sandbox actif + réponse HTTP)` + `test seccomp OK (écriture refusée par SIGSYS)` |
-| RPM produits | build log | ✅ `secure-telemetry-node-...rpm` + `secure-telemetry-node-redtest-...rpm` |
+| Build x86_64 (compilation source) | `rp-cli applications build secure-telemetry-node` | ✅ `done` |
+| Build **aarch64** (packaging du binaire cross-compilé `prebuilt/`) | idem, arch aarch64 activée | ✅ `done` (buildArchCross) |
+| `%check` x86_64 (sandbox actif + HTTP) | intégré au build | ✅ `test OK (sandbox actif + réponse HTTP)` + `test seccomp OK (écriture refusée par SIGSYS)` |
+| RPM produits (4) | build log | ✅ app + redtest, **aarch64 et x86_64** |
 | Audit statique clang-tidy | `rp-cli applications audit --exclude stn-sensor.c` | ✅ **0 vulnérabilité** (module noyau non analysable en user-space) |
 | Tests embarqués (QEMU) | `rp-cli applications test` | ⏸ bloqués par la plateforme (échec au déploiement de la VM, `boot.log` illisible : erreur serveur `read on closed response body`, 0 test exécuté) |
+| **Validation sur cible réelle** | OS redpesk corn 3.0 flashé sur RPi3B+, `dnf install` du RPM factory | ✅ service actif sous seccomp (`/proc` Seccomp: 2), HTTP, run-redtest **4/4 TAP** |
 
 Détails et modérations :
 
+- **Build aarch64** : le builder community est offline et le rust-std
+  aarch64-unknown-linux-gnu n'existe pas dans les dépôts RHEL/Alma (cargo
+  échoue : "can't find crate for std"). Pattern industriel retenu : le binaire
+  aarch64 est cross-compilé hors factory (musl statique), versionné dans
+  `prebuilt/`, et la factory le package (buildArchCross). Un premier essai
+  via `Source1` additionnel a échoué (la factory remappe les tags Source
+  vers ses sources autogénérées) : le binaire dans le dépôt est le
+  contournement déterministe.
 - **Audit** : l'audit initial signalait un « High » sur `kernel/stn-sensor.c`
   (`linux/miscdevice.h` introuvable). C'est un **artefact d'environnement** : le
   module noyau se compile contre les headers kernel de la cible Yocto, absents de
   l'environnement d'audit user-space de redpesk. Le fichier a donc été exclu de
   l'audit applicatif (le code C du module est analysable dans son propre build
   kernel). Le reste du dépôt est audité sans vulnérabilité.
-- **Tests** : le subpackage `-redtest` est bien produit et installé dans
+- **Tests embarqués** : le subpackage `-redtest` est bien produit et installé dans
   `/usr/libexec/redtest/secure-telemetry-node/` (`run-redtest` au format TAP).
   L'exécution sur cible QEMU est en attente de disponibilité de l'infrastructure
   Community (échec au boot de la VM, sans rapport avec l'application ; plusieurs
